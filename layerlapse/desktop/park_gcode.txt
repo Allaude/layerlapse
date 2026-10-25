@@ -1,0 +1,12 @@
+; ===== cc1lapse park =====
+; I-paste sa DULO ng: Elegoo Slicer > Printer settings > Machine G-code > "Layer change G-code"
+; Ilalayo nito ang toolhead at gantry sa likod-kanang sulok kada layer, para kitang-kita ang print.
+G91
+G1 Z0.4 F600        ; iangat nang kaunti ang nozzle
+G90
+G1 X250 Y250 F12000 ; park sa likod-kanang sulok
+G4 P2000            ; maghintay ng 2 segundo para sa litrato
+G91
+G1 Z-0.4 F600       ; ibaba ulit ang nozzle
+G90
+; ===== end cc1lapse park =====

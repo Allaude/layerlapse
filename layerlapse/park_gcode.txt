@@ -1,0 +1,7 @@
+; ===== LayerLapse park (safe) =====
+; Replace everything in: Elegoo Slicer > Printer settings > Machine G-code > "Layer change G-code"
+G1 Z{layer_z + 0.6} F600     ; lift slightly
+G1 X245 Y245 F9000           ; park in the back-right corner, away from the end stops
+G4 P2000                     ; wait 2 seconds for the photo
+G1 Z{layer_z} F600           ; back to layer height
+; ===== end =====
