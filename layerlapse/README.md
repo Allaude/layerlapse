@@ -40,7 +40,9 @@ anything sticking out on that side will hit the case.
 ## 5. Set up each view (Front / Top)
 
 1. Mount the phone, plug it in, open the app and pick **Front** or **Top**.
-2. **Draw box**: drag over the spot where the toolhead parks.
+2. **Draw box**: drag a snug box around the head while it is parked in the back-right
+   corner. Keep it tight: in a front view, other right-side spots (the filament cutter,
+   the purge area) look close to the park spot, and a big box takes them in.
 3. **Marker**: the picture pauses; tap the marker on the toolhead. It can be
    anywhere on screen, even while the head is moving.
 4. When the head parks, the box turns green with white dots on the marker.
@@ -57,8 +59,11 @@ through the box, like the X-axis rail, can then trigger a photo.
 3. Tap **Stop** at the end (or let auto-stop do it). Pick the **Video length**, then
    **Make video** → **Save / Share**. You can change the length and make it again.
 
-While recording, the app shows how many parks it missed and why, e.g.
-“missed 1 (too soon after the last shot)”.
+How a frame is chosen: when the marker arrives in the middle of the box and holds
+still, the photo is taken right then. It is kept once the head leaves again, but only
+if the stop was park-length. Long stops in the box (colour changes, purge, the head
+resting after the print) and quick passes are dropped, so the count only goes up for
+real parks.
 
 ## Focus, zoom, brightness
 
@@ -75,8 +80,9 @@ focus on that spot, or try another lens under Settings → Camera.
 | Marker: minimum share of the box | auto | How much of the box must be marker-coloured. Set when you pick the marker. |
 | Marker: colour tolerance | ±18° | How far the colour may drift. Raise it in dim light. |
 | Background: sensitivity | 18 | Only used without a marker. Lower = more sensitive. |
-| Hold still before shooting | 0.4 s | How long the parked head must be still. Keep it well under the 1.2 s pause. |
-| Minimum time between shots | 1.5 s | Stops one park from being shot twice. Leave it at 1.5 s; higher values skip fast layers. |
+| Hold still before shooting | 0.3 s | How long the parked head must be still before the photo. Max 0.8 s. |
+| Longest park | 3.5 s | Stops longer than this (colour change, purge, resting after the print) are not used. |
+| Minimum time between shots | 1 s | Leave it at 1 s; higher values skip fast layers. |
 | Auto-stop | 10 min | Stops recording when no new photo comes for this long. 0 = off. |
 | Video length | 15 s | Total length of the finished video, including 2 s on the finished print. The speed follows from the number of shots. Can also be changed on the results screen. |
 
@@ -88,8 +94,8 @@ of the RADICALS wordmark.
 
 ## Updating the app
 
-Upload the changed files to the same repository; files with the same name are
-replaced. Close and reopen the app on the phone while online to get the new version.
+Upload the changed files into the same folder as the current `index.html`; files with
+the same name are replaced. The version number is shown at the bottom of Settings. Close and reopen the app on the phone while online to get the new version.
 
 ## Desktop version
 

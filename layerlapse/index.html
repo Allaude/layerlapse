@@ -186,6 +186,10 @@ select{background:var(--bg);border:1px solid var(--line);border-radius:10px;padd
     </div>
     <p id="guide"></p>
 
+    <div id="resumeRow" class="row" hidden>
+      <button class="btn" id="resumeOpen">Open last timelapse</button>
+      <button class="btn" id="resumeDiscard">Discard it</button>
+    </div>
     <div id="setupControls" class="row">
       <button class="btn" id="drawBtn">Draw box</button>
       <button class="btn" id="markBtn" disabled>Marker</button>
@@ -219,9 +223,11 @@ select{background:var(--bg);border:1px solid var(--line);border-radius:10px;padd
   <div class="field"><label for="sThr">Background: sensitivity <span id="vThr"></span></label>
     <input type="range" id="sThr" min="4" max="60" step="1"><p>Only used without a marker. Lower = more sensitive.</p></div>
   <div class="field"><label for="sSettle">Hold still before shooting <span id="vSettle"></span></label>
-    <input type="range" id="sSettle" min="0.1" max="1.5" step="0.1"><p>How long the parked head must be still. Keep it well under the G4 pause (1.2 s).</p></div>
+    <input type="range" id="sSettle" min="0.1" max="0.8" step="0.1"><p>How long the parked head must be still before the photo. 0.3 s suits the 1.2 s park.</p></div>
+  <div class="field"><label for="sMax">Longest park <span id="vMax"></span></label>
+    <input type="range" id="sMax" min="2" max="8" step="0.5"><p>Stops longer than this (colour changes, purge, the head resting after the print) are not used as frames.</p></div>
   <div class="field"><label for="sGap">Minimum time between shots <span id="vGap"></span></label>
-    <input type="range" id="sGap" min="0.5" max="5" step="0.5"><p>Stops one park from being shot twice. 1.5 s is right for almost every print; higher values skip fast layers.</p></div>
+    <input type="range" id="sGap" min="0.5" max="5" step="0.5"><p>Leave it at 1 s. Higher values skip fast layers.</p></div>
   <div class="field"><label for="sAuto">Auto-stop when no new shot <span id="vAuto"></span></label>
     <input type="range" id="sAuto" min="0" max="30" step="1"><p>0 = off. Stops recording on its own after the print ends.</p></div>
   <h3>Video</h3>
@@ -229,7 +235,7 @@ select{background:var(--bg);border:1px solid var(--line);border-radius:10px;padd
     <input type="range" id="sLen" min="3" max="60" step="1"><p>How long the finished video should be. The speed is worked out from the number of shots (2–60 frames per second). You can still change it after the print.</p></div>
   <div class="field"><label for="sCam">Camera</label><select id="sCam"></select></div>
   <button class="btn" id="closeSettings">Done</button>
-  <p style="margin:0;text-align:center;color:var(--dim);font-size:12px">Radicals LayerLapse · v4.2</p>
+  <p style="margin:0;text-align:center;color:var(--dim);font-size:12px">Radicals LayerLapse · v5.0</p>
 </div></div>
 
 <!-- dim -->
@@ -245,7 +251,7 @@ select{background:var(--bg);border:1px solid var(--line);border-radius:10px;padd
     <div class="field"><label for="rLen">Video length <span id="rLenV"></span></label>
       <input type="range" id="rLen" min="3" max="60" step="1"></div>
     <div class="row"><button class="btn" id="playBtn">Play</button><button class="btn go" id="exportBtn">Make video</button></div>
-    <div id="exporting" hidden><div class="prog"><i id="expBar"></i></div><p style="margin:6px 0 0;color:var(--dim);font-size:13px">Making the video… keep the app open.</p></div>
+    <div id="exporting" hidden><div class="prog"><i id="expBar"></i></div><p id="expText" style="margin:6px 0 0;color:var(--dim);font-size:13px">Making the video… keep the app open.</p></div>
     <div id="saveRow" class="row" hidden><button class="btn go" id="shareBtn">Save / Share</button><a class="btn" id="dlLink">Download</a></div>
     <div id="newConfirm" class="confirm" hidden><p style="margin:0">This deletes the shots of this timelapse. Continue?</p>
       <div class="row"><button class="btn" id="newNo">Keep</button><button class="btn stop" id="newYes">Delete and start new</button></div></div>
@@ -260,12 +266,13 @@ const video = $("video"), overlay = $("overlay"), octx = overlay.getContext("2d"
 const CROP = 48;
 
 /* ---------------- settings & profiles (per phone, in localStorage) ---------------- */
-const DEFAULTS = { thr: 18, mkMin: 3, hueTol: 18, settle: 0.4, gap: 1.5, auto: 10, vidLen: 15, cam: "", camCtl: {}, theme: "system", v: 4 };
+const DEFAULTS = { thr: 18, mkMin: 3, hueTol: 18, settle: 0.3, gap: 1.0, maxPark: 3.5, auto: 10, vidLen: 15, cam: "", camCtl: {}, theme: "system", v: 5 };
 function load(k, d){ try{ const v = localStorage.getItem("ll_"+k); return v ? JSON.parse(v) : d; }catch(e){ return d; } }
 function save(k, v){ try{ localStorage.setItem("ll_"+k, JSON.stringify(v)); }catch(e){} }
 let cfg = Object.assign({}, DEFAULTS, load("cfg", {}));
 if ((cfg.v || 0) < 4){ cfg.gap = DEFAULTS.gap; cfg.settle = Math.min(cfg.settle, DEFAULTS.settle); cfg.v = 4; save("cfg", cfg); }  // old defaults caused missed fast layers
 if (!(cfg.gap <= 5)){ cfg.gap = DEFAULTS.gap; save("cfg", cfg); }            // anything above 5 s skips fast layers
+if (cfg.v < 5){ if (!(cfg.settle <= 0.8)) cfg.settle = DEFAULTS.settle; cfg.maxPark = DEFAULTS.maxPark; cfg.v = 5; save("cfg", cfg); }  // a settle as long as the park itself shot the head while leaving
 let profiles = load("profiles", {});           // {front:{box,ref,marker}, top:{...}}
 let profName = load("prof", "front");
 
@@ -284,8 +291,8 @@ $("logoImg").onload = () => { $("logoImg").hidden = false; $("wordmark").hidden 
 /* ---------------- state ---------------- */
 const S = {
   box: null, ref: null, marker: null, picking: false, prev: null, prevC: null, presence: null, motion: null, stillSince: 0,
-  drawing: false, drawStart: null, running: false, shots: 0, lastShotT: 0, visitShot: false,
-  inVisit: false, visitStart: 0, absentSince: 0, visits: 0, missed: 0, lastMiss: "",
+  drawing: false, drawStart: null, running: false, shots: 0, lastShotT: -99,
+  inVisit: false, visitStart: 0, absentSince: 0, cand: null, candT: 0,
   session: null, lastActivity: Date.now(), wake: null, frames: 0
 };
 
@@ -313,9 +320,9 @@ const DB = (() => {
       const db = await open(); if (!db) return mem.filter(f => f.session === session).map(f => f.blob);
       return new Promise(res => { const t = db.transaction("frames"); const r = t.objectStore("frames").index("s").getAll(session); r.onsuccess = () => res(r.result.sort((a,b)=>a.id-b.id).map(f => f.blob)); r.onerror = () => res([]); });
     },
-    async clear(session){
-      const db = await open(); if (!db){ for (let i = mem.length-1; i >= 0; i--) if (mem[i].session === session) mem.splice(i,1); return; }
-      await tx("readwrite", s => { const r = s.index("s").openCursor(session); r.onsuccess = () => { const c = r.result; if (c){ c.delete(); c.continue(); } }; });
+    async clearAll(){                      // one timelapse is kept at a time, so wiping the store is the fast way to delete
+      const db = await open(); if (!db){ mem.length = 0; return; }
+      await tx("readwrite", s => { s.clear(); });
     }
   };
 })();
@@ -485,49 +492,59 @@ function analyse(){
     }
     S.frames++;
   }
-  const present = S.presence !== null && S.presence >= thrNow();
+  // ---- where is the head? ----
+  const thr = thrNow(), c = useMarker() ? S.prevC : null;
+  const inside = !useMarker() || !!c;
+  const inner = !useMarker() || (!!c && c[0] > CROP*0.15 && c[0] < CROP*0.85 && c[1] > CROP*0.15 && c[1] < CROP*0.85);
+  const enter = S.presence !== null && S.presence >= thr && inner;              // arriving: marker clearly in the middle of the box
+  const stay  = S.presence !== null && S.presence >= thr * 0.5 && inside;      // staying: looser, so a flicker doesn't end the park
+  const present = S.inVisit ? stay : enter;
   const stillFor = S.stillSince ? now - S.stillSince : 0;
 
-  // visits: one park = the head entering the box and staying; it ends once the head is away for 0.25 s
+  // ---- one visit = the head arriving, staying, and leaving again ----
   if (present){
     S.absentSince = 0;
-    if (!S.inVisit){ S.inVisit = true; S.visitStart = now; S.visitShot = false; }
+    if (!S.inVisit){ S.inVisit = true; S.visitStart = now; S.cand = null; S.candT = 0; }
   } else if (S.inVisit){
     if (!S.absentSince) S.absentSince = now;
-    if (now - S.absentSince > 0.25){
-      const dur = S.absentSince - S.visitStart;
-      if (S.running && !S.visitShot && dur >= 0.5){
-        S.visits++; S.missed++;
-        S.lastMiss = now - S.lastShotT < cfg.gap ? "too soon after the last shot" : "head never held still";
-      } else if (S.running && S.visitShot) S.visits++;
-      S.inVisit = false;
-    }
+    if (now - S.absentSince > 0.25) endVisit(S.absentSince - S.visitStart);
   }
-  // shoot when the parked head holds still, or (fallback) when it has simply stayed in the box long enough
-  const dwell = S.inVisit ? now - S.visitStart : 0;
-  const ready = stillFor >= cfg.settle || dwell >= cfg.settle + 0.8;
-  if (S.running && present && ready && !S.visitShot && now - S.lastShotT >= cfg.gap) takeShot(now);
+  // the parked head moved off its spot (e.g. on to the cutter) without leaving the box: that park is over
+  if (S.inVisit && S.cand && S.candC && c && Math.hypot(c[0] - S.candC[0], c[1] - S.candC[1]) > CROP * 0.2){
+    endVisit(now - S.visitStart); S.inVisit = true; S.visitStart = now;
+  }
+  if (S.inVisit && S.running){
+    const stayed = now - S.visitStart;
+    // the photo is taken the moment the head is parked: centred in the box and still (or settled in for a moment)
+    if (!S.cand && inner && (stillFor >= cfg.settle || stayed >= cfg.settle + 0.5) && stayed <= cfg.maxPark && now - S.lastShotT >= cfg.gap) grabCandidate(now);
+    if (stayed > cfg.maxPark) S.cand = null;      // too long for a park: colour change, purge, or the head resting after the print
+  }
   if (S.running && cfg.auto > 0 && S.shots > 0 && now - S.lastShotT > cfg.auto * 60) stopRun("Auto-stop: no new shot for " + cfg.auto + " min.");
   renderStatus(present, stillFor >= cfg.settle);
 }
 
-async function takeShot(now){
-  S.visitShot = true; S.lastShotT = now;
-  // instant feedback first; the photo is encoded and saved right after
-  S.shots++; $("shotCount").textContent = S.shots; $("dimCount").textContent = S.shots; updateRunSub();
-  const f = $("flash"); f.classList.add("on"); requestAnimationFrame(() => requestAnimationFrame(() => f.classList.remove("on")));
+function grabCandidate(now){
   const vw = video.videoWidth, vh = video.videoHeight;
   const c = document.createElement("canvas"); c.width = vw; c.height = vh;
   c.getContext("2d").drawImage(video, 0, 0, vw, vh);
-  const blob = await new Promise(r => c.toBlob(r, "image/jpeg", 0.92));
+  S.cand = new Promise(r => c.toBlob(r, "image/jpeg", 0.88)); S.candT = now; S.candC = S.prevC ? S.prevC.slice() : null;
+  const f = $("flash"); f.classList.add("on"); requestAnimationFrame(() => requestAnimationFrame(() => f.classList.remove("on")));
+}
+/* the head has left the box: keep the photo only if the stay looked like a park (not a pass-by, not a long stop) */
+function endVisit(dur){
+  const cand = S.cand, t = S.candT;
+  S.inVisit = false; S.absentSince = 0; S.cand = null;
+  if (S.running && cand && dur >= 0.5 && dur <= cfg.maxPark) commitShot(cand, t);
+}
+async function commitShot(cand, t){
+  S.shots++; S.lastShotT = t;
+  $("shotCount").textContent = S.shots; $("dimCount").textContent = S.shots;
+  const blob = await cand, session = S.session;
   if (!blob){ S.shots--; $("shotCount").textContent = S.shots; toast("A shot couldn't be saved."); return; }
-  await DB.add(S.session, blob);
+  await DB.add(session, blob);
   const u = URL.createObjectURL(blob); const old = $("lastThumb").src; $("lastThumb").src = u; if (old.startsWith("blob:")) URL.revokeObjectURL(old);
 }
-function updateRunSub(){
-  const view = profName === "top" ? "Top" : "Front";
-  $("runSub").textContent = "shots · " + view + " view" + (S.missed ? " · missed " + S.missed + " (" + S.lastMiss + ")" : "");
-}
+function updateRunSub(){ $("runSub").textContent = "shots · " + (profName === "top" ? "Top" : "Front") + " view"; }
 
 /* ---------------- UI: status + overlay ---------------- */
 function setStatus(t, cls){ $("statusText").textContent = t; $("dot").className = "dot " + (cls||""); }
@@ -664,8 +681,9 @@ function refreshButtons(){
 /* ---------------- run ---------------- */
 async function wakeOn(){ try{ S.wake = await navigator.wakeLock?.request("screen"); }catch(e){ S.wake = null; } }
 $("startBtn").onclick = async () => {
+  await DB.clearAll(); $("resumeRow").hidden = true;                              // only one timelapse is kept
   S.session = "s" + Date.now(); save("session", S.session);
-  Object.assign(S, { running: true, shots: 0, lastShotT: performance.now()/1000 - 99, visitShot: false, inVisit: false, visits: 0, missed: 0, lastMiss: "" });
+  Object.assign(S, { running: true, shots: 0, lastShotT: -99, inVisit: false, absentSince: 0, cand: null });
   $("shotCount").textContent = "0"; $("dimCount").textContent = "0"; $("lastThumb").removeAttribute("src");
   $("setupControls").hidden = true; $("startBtn").hidden = true; $("runControls").hidden = false;
   updateRunSub(); $("guide").hidden = true; await wakeOn(); S.lastActivity = Date.now();
@@ -695,7 +713,7 @@ function vidFps(){ return Math.max(2, Math.min(60, R.blobs.length / Math.max(1, 
 function updateResSub(){
   const n = R.blobs.length, fps = vidFps(), len = n / fps + HOLD_S;
   $("rLen").value = cfg.vidLen; $("rLenV").textContent = len.toFixed(1) + " s · " + (+fps.toFixed(1)) + " fps";
-  $("resSub").textContent = n + " shots" + (S.missed ? " · " + S.missed + " missed" : "");
+  $("resSub").textContent = n + " shots";
 }
 $("rLen").oninput = e => { cfg.vidLen = +e.target.value; save("cfg", cfg); $("sLen").value = cfg.vidLen; $("vLen").textContent = cfg.vidLen + " s"; updateResSub(); $("saveRow").hidden = true; };
 async function openResults(session){
@@ -717,14 +735,98 @@ $("playBtn").onclick = () => {
   let i = 0; $("playBtn").textContent = "Pause";
   R.playing = setInterval(async () => { if (i >= R.blobs.length){ clearInterval(R.playing); R.playing = null; $("playBtn").textContent = "Play"; return; } $("scrub").value = i; await showFrame(i++); }, 1000 / vidFps());
 };
+/* ---- tiny MP4 writer: one H.264 track, all samples in one chunk, moov before mdat (plays while downloading) ---- */
+function muxMp4(chunks, avcC, w, h, fps){
+  const TS = 90000, delta = Math.round(TS / fps), n = chunks.length, durTS = n * delta, durMs = Math.round(durTS * 1000 / TS);
+  const u32 = v => [(v >>> 24) & 255, (v >>> 16) & 255, (v >>> 8) & 255, v & 255], u16 = v => [(v >> 8) & 255, v & 255];
+  const str = t => Array.from(t, ch => ch.charCodeAt(0)), zeros = k => new Array(k).fill(0);
+  const cat = parts => { const arrs = parts.map(x => x instanceof Uint8Array ? x : Uint8Array.from(x)); const out = new Uint8Array(arrs.reduce((a, x) => a + x.length, 0)); let o = 0; for (const x of arrs){ out.set(x, o); o += x.length; } return out; };
+  const box = (type, ...parts) => { const body = cat(parts); return cat([u32(8 + body.length), str(type), body]); };
+  const full = (type, ver, flags, ...parts) => box(type, [ver, (flags >> 16) & 255, (flags >> 8) & 255, flags & 255], ...parts);
+  const matrix = [0x00010000, 0, 0, 0, 0x00010000, 0, 0, 0, 0x40000000].flatMap(u32);
+  const keys = []; chunks.forEach((c, i) => c.key && keys.push(i + 1));
+  const build = offset => box("moov",
+    full("mvhd", 0, 0, u32(0), u32(0), u32(1000), u32(durMs), u32(0x00010000), u16(0x0100), u16(0), u32(0), u32(0), matrix, zeros(24), u32(2)),
+    box("trak",
+      full("tkhd", 0, 3, u32(0), u32(0), u32(1), u32(0), u32(durMs), u32(0), u32(0), u16(0), u16(0), u16(0), u16(0), matrix, u32(w * 65536), u32(h * 65536)),
+      box("mdia",
+        full("mdhd", 0, 0, u32(0), u32(0), u32(TS), u32(durTS), u16(0x55c4), u16(0)),
+        full("hdlr", 0, 0, u32(0), str("vide"), u32(0), u32(0), u32(0), str("VideoHandler"), [0]),
+        box("minf",
+          full("vmhd", 0, 1, u16(0), u16(0), u16(0), u16(0)),
+          box("dinf", full("dref", 0, 0, u32(1), full("url ", 0, 1))),
+          box("stbl",
+            full("stsd", 0, 0, u32(1), box("avc1", zeros(6), u16(1), zeros(16), u16(w), u16(h), u32(0x00480000), u32(0x00480000), u32(0), u16(1), zeros(32), u16(0x0018), u16(0xffff), box("avcC", avcC))),
+            full("stts", 0, 0, u32(1), u32(n), u32(delta)),
+            full("stss", 0, 0, u32(keys.length), keys.flatMap(u32)),
+            full("stsc", 0, 0, u32(1), u32(1), u32(n), u32(1)),
+            full("stsz", 0, 0, u32(0), u32(n), chunks.flatMap(c => u32(c.data.length))),
+            full("stco", 0, 0, u32(1), u32(offset)))))));
+  const ftyp = box("ftyp", str("isom"), u32(512), str("isom"), str("iso2"), str("avc1"), str("mp41"));
+  const moovSize = build(0).length, dataSize = chunks.reduce((a, c) => a + c.data.length, 0);
+  const moov = build(ftyp.length + moovSize + 8);
+  return new Blob([ftyp, moov, cat([u32(8 + dataSize), str("mdat")]), ...chunks.map(c => c.data)], { type: "video/mp4" });
+}
+function setExp(frac, text){ $("expBar").style.width = Math.round(frac * 100) + "%"; if (text) $("expText").textContent = text; }
+function etaText(done, total, t0){
+  const el = (performance.now() - t0) / 1000, left = done ? el / done * (total - done) : 0;
+  return "Making the video… " + done + " / " + total + (done > 5 ? " · about " + Math.max(1, Math.round(left)) + " s left" : "") + ". Keep the app open.";
+}
+async function findEncoder(w, h, fps){
+  if (!("VideoEncoder" in window)) return null;
+  const bitrate = Math.round(Math.min(20e6, Math.max(4e6, w * h * fps * 0.12)));
+  for (const codec of ["avc1.42E028", "avc1.42E032", "avc1.4D0028", "avc1.640028"]){       // baseline first: no B-frames
+    const c = { codec, width: w, height: h, bitrate, framerate: fps, avc: { format: "avc" } };
+    try{ if ((await VideoEncoder.isConfigSupported(c)).supported) return c; }catch(e){}
+  }
+  return null;
+}
+/* fast path: encode every frame with WebCodecs (faster than real time, exact length) */
+async function exportWebCodecs(){
+  const n = R.blobs.length, FPS = vidFps();
+  const first = await createImageBitmap(R.blobs[0]);
+  let w0 = first.width, h0 = first.height; first.close();
+  let ec = null, w = 0, h = 0;
+  for (const maxSide of [1920, 1280]){
+    const sc = Math.min(1, maxSide / Math.max(w0, h0)); w = Math.round(w0 * sc / 2) * 2; h = Math.round(h0 * sc / 2) * 2;
+    if ((ec = await findEncoder(w, h, FPS))) break;
+  }
+  if (!ec) return null;
+  const chunks = []; let desc = null, err = null, lastTs = -1, ordered = true;
+  const enc = new VideoEncoder({
+    output: (chunk, meta) => {
+      const data = new Uint8Array(chunk.byteLength); chunk.copyTo(data); chunks.push({ data, key: chunk.type === "key" });
+      if (chunk.timestamp < lastTs) ordered = false; lastTs = chunk.timestamp;
+      const d = meta?.decoderConfig?.description;
+      if (d && !desc) desc = d instanceof ArrayBuffer ? new Uint8Array(d.slice(0)) : new Uint8Array(d.buffer.slice(d.byteOffset, d.byteOffset + d.byteLength));
+    },
+    error: e => { err = e; }
+  });
+  enc.configure(ec);
+  const cv = document.createElement("canvas"); cv.width = w; cv.height = h; const ctx = cv.getContext("2d");
+  const holdN = Math.round(FPS * HOLD_S), total = n + holdN, dur = 1e6 / FPS, gop = Math.max(1, Math.round(FPS * 2)), t0 = performance.now();
+  let next = createImageBitmap(R.blobs[0]);
+  for (let i = 0; i < total; i++){
+    if (err) throw err;
+    if (i < n){ const bm = await next; next = i + 1 < n ? createImageBitmap(R.blobs[i + 1]) : null; ctx.drawImage(bm, 0, 0, w, h); bm.close(); }
+    const vf = new VideoFrame(cv, { timestamp: Math.round(i * dur), duration: Math.round(dur) });
+    enc.encode(vf, { keyFrame: i % gop === 0 }); vf.close();
+    while (enc.encodeQueueSize > 4) await new Promise(r => setTimeout(r, 4));
+    if (i % 4 === 0 || i === total - 1) setExp((i + 1) / total, etaText(Math.min(i + 1, n), n, t0));
+  }
+  await enc.flush(); enc.close();
+  if (err) throw err;
+  if (!desc || !ordered || chunks.length !== total) return null;                 // unexpected encoder output: use the fallback
+  return { blob: muxMp4(chunks, desc, w, h, FPS), ext: "mp4" };
+}
+/* fallback: record the canvas in real time (older browsers) */
 function pickMime(){
   for (const m of ["video/mp4;codecs=avc1.42E028","video/mp4","video/webm;codecs=vp9","video/webm;codecs=vp8","video/webm"])
     if (window.MediaRecorder && MediaRecorder.isTypeSupported(m)) return m;
   return "";
 }
-$("exportBtn").onclick = async () => {
-  const mime = pickMime(); if (!mime){ toast("This browser can't make videos."); return; }
-  $("exportBtn").disabled = true; $("exporting").hidden = false; $("saveRow").hidden = true;
+async function exportRecorder(){
+  const mime = pickMime(); if (!mime) throw new Error("this browser can't make videos");
   const first = await bitmapAt(0);
   let w = first.width, h = first.height; const s = Math.min(1, 1920 / Math.max(w, h)); w = Math.round(w*s/2)*2; h = Math.round(h*s/2)*2; first.close?.();
   const c = document.createElement("canvas"); c.width = w; c.height = h; const ctx = c.getContext("2d");
@@ -733,40 +835,54 @@ $("exportBtn").onclick = async () => {
   const chunks = []; rec.ondataavailable = e => e.data.size && chunks.push(e.data);
   const done = new Promise(r => rec.onstop = r);
   const dt = 1000 / FPS, sleep = ms => new Promise(r => setTimeout(r, ms));
-  const list = [...R.blobs.keys()]; const holdN = Math.round(FPS * HOLD_S);      // hold the finished print at the end
+  const list = [...R.blobs.keys()]; const holdN = Math.round(FPS * HOLD_S);
   for (let k = 0; k < holdN; k++) list.push(R.blobs.length - 1);
-  let nextBm = bitmapAt(list[0]), curIdx = -1, cur = null;                       // decode ahead so drawing keeps pace
-  ctx.fillStyle = "#000"; ctx.fillRect(0, 0, w, h);
+  let cur = await bitmapAt(list[0]), curIdx = list[0];
+  ctx.drawImage(cur, 0, 0, w, h);
+  let nk0 = list.findIndex(v => v !== curIdx), nextBm = nk0 >= 0 ? bitmapAt(list[nk0]) : Promise.resolve(null);
   rec.start(100); const t0 = performance.now();
   for (let k = 0; k < list.length; k++){
     if (list[k] !== curIdx){
       cur?.close?.(); cur = await nextBm; curIdx = list[k];
       const nk = list.findIndex((v, j) => j > k && v !== curIdx); nextBm = nk >= 0 ? bitmapAt(list[nk]) : Promise.resolve(null);
     }
-    ctx.drawImage(cur, 0, 0, w, h);                                                // redraw every tick so the stream keeps flowing
-    $("expBar").style.width = ((k+1) / list.length * 100) + "%";
+    ctx.drawImage(cur, 0, 0, w, h);
+    setExp((k+1) / list.length, etaText(Math.min(k + 1, R.blobs.length), R.blobs.length, t0));
     const wait = t0 + (k+1)*dt - performance.now(); if (wait > 0) await sleep(wait);
   }
   cur?.close?.(); await sleep(dt * 2);
   rec.stop(); await done;
-  const blob = new Blob(chunks, { type: mime.split(";")[0] });
-  const ext = mime.startsWith("video/mp4") ? "mp4" : "webm";
-  const name = "radicals-layerlapse-" + new Date().toISOString().slice(0,16).replace(/[-:T]/g, "") + "." + ext;
+  return { blob: new Blob(chunks, { type: mime.split(";")[0] }), ext: mime.startsWith("video/mp4") ? "mp4" : "webm" };
+}
+$("exportBtn").onclick = async () => {
+  if (R.busy || !R.blobs.length) return; R.busy = true;
+  $("exportBtn").disabled = true; $("exporting").hidden = false; $("saveRow").hidden = true; setExp(0, "Getting ready…");
+  let out = null;
+  try{ out = await exportWebCodecs(); }catch(e){ console.warn("fast export failed", e); out = null; }
+  if (!out){ try{ out = await exportRecorder(); }catch(e){ toast("Couldn't make the video: " + e.message); } }
+  R.busy = false; $("exporting").hidden = true; $("exportBtn").disabled = false;
+  if (!out) return;
+  const name = "radicals-layerlapse-" + new Date().toISOString().slice(0,16).replace(/[-:T]/g, "") + "." + out.ext;
   if (R.url) URL.revokeObjectURL(R.url);
-  R.url = URL.createObjectURL(blob); R.file = new File([blob], name, { type: blob.type });
+  R.url = URL.createObjectURL(out.blob); R.file = new File([out.blob], name, { type: out.blob.type });
   $("dlLink").href = R.url; $("dlLink").download = name;
   $("shareBtn").hidden = !(navigator.canShare && navigator.canShare({ files: [R.file] }));
-  $("exporting").hidden = true; $("saveRow").hidden = false; $("exportBtn").disabled = false;
-  toast("Video ready (" + (blob.size/1e6).toFixed(1) + " MB, " + ext.toUpperCase() + ")");
+  $("saveRow").hidden = false;
+  toast("Video ready (" + (out.blob.size/1e6).toFixed(1) + " MB)");
 };
 $("shareBtn").onclick = async () => { try{ await navigator.share({ files: [R.file], title: "Radicals LayerLapse" }); }catch(e){} };
 $("newBtn").onclick = () => { $("newConfirm").hidden = false; };
 $("newNo").onclick = () => { $("newConfirm").hidden = true; };
-$("newYes").onclick = async () => { await DB.clear(S.session); save("session", null); $("results").hidden = true; R.blobs = []; };
+$("newYes").onclick = () => {
+  if (R.playing){ clearInterval(R.playing); R.playing = null; $("playBtn").textContent = "Play"; }
+  save("session", null); S.session = null; R.blobs = [];
+  $("newConfirm").hidden = true; $("results").hidden = true; $("resumeRow").hidden = true; guide("");
+  DB.clearAll().then(() => toast("Old timelapse deleted"), () => {});            // runs in the background; the screen is free right away
+};
 
 /* ---------------- settings sheet ---------------- */
 const fields = [["sThr","thr","vThr", v=>v],["sMk","mkMin","vMk", v=>v+"%"],["sHue","hueTol","vHue", v=>"±"+v+"°"],["sSettle","settle","vSettle", v=>(+v).toFixed(1)+" s"],
-  ["sGap","gap","vGap", v=>(+v).toFixed(1)+" s"],["sAuto","auto","vAuto", v=>+v ? v+" min" : "off"],["sLen","vidLen","vLen", v=>v+" s"]];
+  ["sGap","gap","vGap", v=>(+v).toFixed(1)+" s"],["sMax","maxPark","vMax", v=>(+v).toFixed(1)+" s"],["sAuto","auto","vAuto", v=>+v ? v+" min" : "off"],["sLen","vidLen","vLen", v=>v+" s"]];
 fields.forEach(([id, key, out, fmt]) => {
   const el = $(id); el.value = cfg[key]; $(out).textContent = fmt(cfg[key]);
   el.oninput = () => { cfg[key] = +el.value; $(out).textContent = fmt(el.value); save("cfg", cfg); };
@@ -793,7 +909,12 @@ selectProfile(profName); guide("");
 startCamera();
 setInterval(analyse, 100);
 const pending = load("session", null);
-if (pending){ S.session = pending; DB.list(pending).then(b => { if (b.length){ toast("Found an unfinished timelapse: " + b.length + " shots"); openResults(pending); } }); }
+if (pending){ DB.list(pending).then(b => {
+  if (!b.length){ save("session", null); return; }
+  S.session = pending; $("resumeRow").hidden = false; guide("Your last timelapse (" + b.length + " shots) is still saved.");
+}); }
+$("resumeOpen").onclick = () => { $("resumeRow").hidden = true; guide(""); openResults(S.session); };
+$("resumeDiscard").onclick = () => { $("resumeRow").hidden = true; save("session", null); S.session = null; guide(""); DB.clearAll().then(() => toast("Old timelapse deleted"), () => {}); };
 if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(()=>{});
 </script>
 </body>
