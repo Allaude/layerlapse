@@ -111,6 +111,10 @@ button:focus-visible,input:focus-visible,select:focus-visible,a:focus-visible{ou
 .field p{margin:0;color:var(--dim);font-size:13px}
 input[type=range]{width:100%;accent-color:var(--accent)}
 select{background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:10px;color:var(--text)}
+.shapeSeg{display:flex;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.shapeSeg button{flex:1;border:0;background:var(--surface);padding:9px;font-weight:600;cursor:pointer;color:var(--dim)}
+.shapeSeg button+button{border-left:1px solid var(--line)}
+.shapeSeg button[aria-pressed=true]{background:var(--accent);color:var(--accent-ink)}
 .themeSeg{display:flex;border:1px solid var(--line);border-radius:10px;overflow:hidden}
 .themeSeg button{flex:1;border:0;background:var(--bg);padding:10px;font-weight:600;cursor:pointer;color:var(--dim)}
 .themeSeg button+button{border-left:1px solid var(--line)}
@@ -190,8 +194,11 @@ select{background:var(--bg);border:1px solid var(--line);border-radius:10px;padd
       <button class="btn" id="resumeOpen">Open last timelapse</button>
       <button class="btn" id="resumeDiscard">Discard it</button>
     </div>
+    <div id="shapeRow" class="shapeSeg" role="group" aria-label="Park area shape" hidden>
+      <button data-shape="rect">Box</button><button data-shape="ellipse">Circle</button><button data-shape="poly">Free</button>
+    </div>
     <div id="setupControls" class="row">
-      <button class="btn" id="drawBtn">Draw box</button>
+      <button class="btn" id="drawBtn">Draw area</button>
       <button class="btn" id="markBtn" disabled>Marker</button>
       <button class="btn" id="refBtn" disabled>Background</button>
     </div>
@@ -235,7 +242,7 @@ select{background:var(--bg);border:1px solid var(--line);border-radius:10px;padd
     <input type="range" id="sLen" min="3" max="60" step="1"><p>How long the finished video should be. The speed is worked out from the number of shots (2–60 frames per second). You can still change it after the print.</p></div>
   <div class="field"><label for="sCam">Camera</label><select id="sCam"></select></div>
   <button class="btn" id="closeSettings">Done</button>
-  <p style="margin:0;text-align:center;color:var(--dim);font-size:12px">Radicals LayerLapse · v5.0</p>
+  <p style="margin:0;text-align:center;color:var(--dim);font-size:12px">Radicals LayerLapse · v5.1</p>
 </div></div>
 
 <!-- dim -->
@@ -266,7 +273,7 @@ const video = $("video"), overlay = $("overlay"), octx = overlay.getContext("2d"
 const CROP = 48;
 
 /* ---------------- settings & profiles (per phone, in localStorage) ---------------- */
-const DEFAULTS = { thr: 18, mkMin: 3, hueTol: 18, settle: 0.3, gap: 1.0, maxPark: 3.5, auto: 10, vidLen: 15, cam: "", camCtl: {}, theme: "system", v: 5 };
+const DEFAULTS = { thr: 18, mkMin: 3, hueTol: 18, settle: 0.3, gap: 1.0, maxPark: 3.5, auto: 10, vidLen: 15, shape: "ellipse", cam: "", camCtl: {}, theme: "system", v: 5 };
 function load(k, d){ try{ const v = localStorage.getItem("ll_"+k); return v ? JSON.parse(v) : d; }catch(e){ return d; } }
 function save(k, v){ try{ localStorage.setItem("ll_"+k, JSON.stringify(v)); }catch(e){} }
 let cfg = Object.assign({}, DEFAULTS, load("cfg", {}));
@@ -424,6 +431,39 @@ function grabCrop(rect, src){
   return g;
 }
 
+/* ---- park area shape (box, circle or free-drawn). Detection runs on the 48x48 crop of its bounding box,
+        counting only pixels inside the shape. ---- */
+let shapeMask = null, innerMask = null, shapeCount = CROP * CROP;
+function buildShapeMasks(){
+  shapeMask = innerMask = null; shapeCount = CROP * CROP;
+  if (!S.box) return;
+  const cv = document.createElement("canvas"); cv.width = cv.height = CROP; const x = cv.getContext("2d");
+  const sh = S.shape || { type: "rect" }, [x0, y0, x1, y1] = S.box;
+  x.fillStyle = "#fff"; x.beginPath();
+  if (sh.type === "ellipse") x.ellipse(CROP/2, CROP/2, CROP/2, CROP/2, 0, 0, Math.PI * 2);
+  else if (sh.type === "poly" && sh.pts && sh.pts.length > 2){
+    sh.pts.forEach(([u, v], i) => { const px = (u - x0) / (x1 - x0) * CROP, py = (v - y0) / (y1 - y0) * CROP; i ? x.lineTo(px, py) : x.moveTo(px, py); });
+    x.closePath();
+  } else x.rect(0, 0, CROP, CROP);
+  x.fill();
+  const d = x.getImageData(0, 0, CROP, CROP).data; shapeMask = new Uint8Array(CROP * CROP); let n = 0;
+  for (let j = 0; j < shapeMask.length; j++) if (d[j*4 + 3] > 127){ shapeMask[j] = 1; n++; }
+  shapeCount = Math.max(1, n);
+  // inner area = the shape shrunk inwards, so a marker only touching the edge doesn't count as "arrived"
+  for (let r = Math.round(CROP * 0.15); r >= 1; r--){
+    const offs = []; for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) if (dx*dx + dy*dy <= r*r) offs.push([dx, dy]);
+    const m = new Uint8Array(CROP * CROP); let k = 0;
+    for (let y = 0; y < CROP; y++) for (let xx = 0; xx < CROP; xx++){
+      if (!shapeMask[y*CROP + xx]) continue;
+      let ok = true;
+      for (const [dx, dy] of offs){ const X = xx + dx, Y = y + dy; if (X < 0 || Y < 0 || X >= CROP || Y >= CROP || !shapeMask[Y*CROP + X]){ ok = false; break; } }
+      if (ok){ m[y*CROP + xx] = 1; k++; }
+    }
+    if (k >= n * 0.15 || r === 1){ innerMask = k ? m : shapeMask; break; }
+  }
+}
+const inShape = (m, c) => !!c && (!m || m[Math.min(CROP-1, c[1] | 0) * CROP + Math.min(CROP-1, c[0] | 0)] === 1);
+
 /* marker colour matching (hue based, so it survives light changes) */
 function rgb2hsv(r, g, b){
   r /= 255; g /= 255; b /= 255;
@@ -432,10 +472,12 @@ function rgb2hsv(r, g, b){
   if (d){ if (mx === r) h = ((g-b)/d) % 6; else if (mx === g) h = (b-r)/d + 2; else h = (r-g)/d + 4; h *= 60; if (h < 0) h += 360; }
   return [h, mx ? d/mx : 0, mx];
 }
-function markerMask(d){
+function markerMask(d, shaped = true){
   const m = S.marker; if (!m || !d) return null;
+  const sm = shaped ? shapeMask : null;
   const sMin = Math.max(0.2, m.s * 0.42), vMin = Math.max(0.1, m.v * 0.32), out = new Uint8Array(d.length / 4);
   for (let i = 0, j = 0; i < d.length; i += 4, j++){
+    if (sm && !sm[j]) continue;
     const [h, sat, v] = rgb2hsv(d[i], d[i+1], d[i+2]);
     if (sat < sMin || v < vMin) continue;
     const dh = Math.abs(h - m.h); if (Math.min(dh, 360 - dh) <= cfg.hueTol) out[j] = 1;
@@ -449,12 +491,13 @@ function markerMask(d){
   }
   return clean;
 }
-function maskStats(mask){
+function maskStats(mask, shaped = true){
   let n = 0, sx = 0, sy = 0;
   for (let j = 0; j < mask.length; j++) if (mask[j]){ n++; sx += j % CROP; sy += (j / CROP) | 0; }
-  return { pct: n / mask.length * 100, c: n ? [sx/n, sy/n] : null };
+  return { pct: n / (shaped && shapeMask ? shapeCount : mask.length) * 100, c: n ? [sx/n, sy/n] : null };
 }
-function markerPct(d){ const m = markerMask(d); return m ? maskStats(m).pct : null; }
+function markerPct(d, shaped = true){ const m = markerMask(d, shaped); return m ? maskStats(m, shaped).pct : null; }
+function madShape(a, b){ if (!shapeMask) return mad(a, b); let s = 0; for (let i = 0; i < a.length; i++) if (shapeMask[i]) s += Math.abs(a[i] - b[i]); return s / shapeCount; }
 function useMarker(){ return !!S.marker; }
 function thrNow(){ return useMarker() ? cfg.mkMin : cfg.thr; }
 function meterMax(){ return useMarker() ? Math.max(20, cfg.mkMin * 4) : 80; }
@@ -486,7 +529,7 @@ function analyse(){
       S.motion = S.prev ? mad(b, S.prev) : null; S.prev = b;
       if (S.motion !== null && S.motion <= STILL_BG){ if (!S.stillSince) S.stillSince = now; } else S.stillSince = 0;
       if (S.ref){
-        S.presence = mad(g, S.ref);
+        S.presence = madShape(g, S.ref);
         if (S.presence < cfg.thr * 0.5 && S.stillSince && now - S.stillSince > 2){ for (let i = 0; i < g.length; i++) S.ref[i] = (S.ref[i]*4 + g[i]) / 5; }
       } else S.presence = null;
     }
@@ -494,8 +537,8 @@ function analyse(){
   }
   // ---- where is the head? ----
   const thr = thrNow(), c = useMarker() ? S.prevC : null;
-  const inside = !useMarker() || !!c;
-  const inner = !useMarker() || (!!c && c[0] > CROP*0.15 && c[0] < CROP*0.85 && c[1] > CROP*0.15 && c[1] < CROP*0.85);
+  const inside = !useMarker() || inShape(shapeMask, c);
+  const inner = !useMarker() || inShape(innerMask, c);
   const enter = S.presence !== null && S.presence >= thr && inner;              // arriving: marker clearly in the middle of the box
   const stay  = S.presence !== null && S.presence >= thr * 0.5 && inside;      // staying: looser, so a flicker doesn't end the park
   const present = S.inVisit ? stay : enter;
@@ -554,13 +597,13 @@ function renderStatus(present, still){
   if (S.presence === null){ $("bar").style.width = "0"; $("pval").textContent = "—"; m.classList.remove("on"); }
   else { $("bar").style.width = Math.min(100, S.presence / meterMax() * 100) + "%"; $("pval").textContent = S.presence.toFixed(0) + (useMarker() ? "%" : ""); m.classList.toggle("on", present); }
   if (S.running){
-    setStatus(present ? (still ? "Head parked ✓" : "Head in box, waiting for it to stop") : "Recording · waiting for the head", "rec");
+    setStatus(present ? (still ? "Head parked ✓" : "Head in area, waiting for it to stop") : "Recording · waiting for the head", "rec");
   } else if (!video.videoWidth){ /* camera not ready */ }
   else if (S.picking) setStatus("Picking marker", "warn");
-  else if (S.drawing) setStatus("Drawing box", "warn");
+  else if (S.drawing) setStatus("Drawing park area", "warn");
   else if (!S.box) setStatus("Not set up", "");
-  else if (!S.ref && !S.marker) setStatus("Box set · no marker", "warn");
-  else setStatus(present ? (still ? "Head parked ✓ ready" : "Head in box, moving") : "Ready · box is empty", "ok");
+  else if (!S.ref && !S.marker) setStatus("Area set · no marker", "warn");
+  else setStatus(present ? (still ? "Head parked ✓ ready" : "Head in area, moving") : "Ready · area is empty", "ok");
   drawOverlay(present);
 }
 function drawOverlay(present){
@@ -571,10 +614,15 @@ function drawOverlay(present){
   const r = picRect(), [x0,y0,x1,y1] = S.box;
   const x = r.x + x0*r.w, y = r.y + y0*r.h, w = (x1-x0)*r.w, h = (y1-y0)*r.h;
   const col = S.drawing ? "#ff7a1a" : present ? "#43d17a" : "#f5b941";
-  octx.fillStyle = col + "26"; octx.fillRect(x,y,w,h);
-  octx.lineWidth = 3; octx.strokeStyle = col; octx.strokeRect(x,y,w,h);
+  const sh = S.drawPts ? { type: "poly", pts: S.drawPts } : (S.shape || { type: "rect" });
+  octx.beginPath();
+  if (sh.type === "ellipse") octx.ellipse(x + w/2, y + h/2, w/2, h/2, 0, 0, Math.PI * 2);
+  else if (sh.type === "poly" && sh.pts && sh.pts.length > 1){ sh.pts.forEach(([u, v], i) => { const px = r.x + u*r.w, py = r.y + v*r.h; i ? octx.lineTo(px, py) : octx.moveTo(px, py); }); if (!S.drawPts) octx.closePath(); }
+  else octx.rect(x, y, w, h);
+  octx.fillStyle = col + "26"; octx.fill();
+  octx.lineWidth = 3; octx.lineJoin = "round"; octx.strokeStyle = col; octx.stroke();
   octx.fillStyle = col; octx.font = "600 12px system-ui";
-  const label = (present ? "HEAD" : "PARK BOX") + (useMarker() ? " · marker" : ""), lw = octx.measureText(label).width;
+  const label = (present ? "HEAD" : "PARK AREA") + (useMarker() ? " · marker" : ""), lw = octx.measureText(label).width;
   octx.fillText(label, Math.max(4, Math.min(x + 2, W - lw - 6)), y - 6 < 12 ? y + h + 16 : y - 6);
   if (useMarker() && lastMask && !S.running){        // show which pixels match the marker colour (setup only)
     const cw = w / CROP, ch = h / CROP; octx.fillStyle = "#ffffffcc";
@@ -587,29 +635,58 @@ function toNorm(e){
   const r = picRect(), b = overlay.getBoundingClientRect();
   return [Math.min(1, Math.max(0, (e.clientX - b.left - r.x) / r.w)), Math.min(1, Math.max(0, (e.clientY - b.top - r.y) / r.h))];
 }
+const SHAPE_GUIDE = {
+  rect: "Box: drag from corner to corner over the parked head.",
+  ellipse: "Circle: touch the centre of the parked marker and drag outward.",
+  poly: "Free: draw around the parked head with your finger, then lift."
+};
+function bboxOf(pts){ const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]); return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)]; }
 $("stage").addEventListener("pointerdown", e => {
   if (e.target.closest("#camPanel, #topbar")) return;
   if (S.picking){ e.preventDefault(); pickMarker(e); return; }
   if (!S.drawing){ if (!S.running) tapFocus(e); return; }
-  e.preventDefault(); S.drawStart = toNorm(e); S.box = [...S.drawStart, ...S.drawStart]; $("stage").setPointerCapture(e.pointerId);
+  e.preventDefault(); $("stage").setPointerCapture(e.pointerId);
+  const p = toNorm(e); S.drawStart = p; S.drawStartPx = [e.clientX, e.clientY];
+  if (cfg.shape === "poly"){ S.drawPts = [p]; S.box = [...p, ...p]; }
+  else { S.drawPts = null; S.shape = { type: cfg.shape }; S.box = [...p, ...p]; }
 });
 $("stage").addEventListener("pointermove", e => {
   if (!S.drawing || !S.drawStart) return;
-  const p = toNorm(e), a = S.drawStart; S.box = [Math.min(a[0],p[0]), Math.min(a[1],p[1]), Math.max(a[0],p[0]), Math.max(a[1],p[1])];
+  const p = toNorm(e), a = S.drawStart;
+  if (cfg.shape === "poly"){
+    const last = S.drawPts[S.drawPts.length - 1];
+    if (Math.hypot(p[0] - last[0], p[1] - last[1]) > 0.004){ S.drawPts.push(p); S.box = bboxOf(S.drawPts); }
+  } else if (cfg.shape === "ellipse"){
+    // a true circle on screen, centred where the finger went down
+    const R = picRect(), rad = Math.hypot(e.clientX - S.drawStartPx[0], e.clientY - S.drawStartPx[1]);
+    const ru = rad / R.w, rv = rad / R.h;
+    S.box = [Math.max(0, a[0] - ru), Math.max(0, a[1] - rv), Math.min(1, a[0] + ru), Math.min(1, a[1] + rv)];
+  } else S.box = [Math.min(a[0],p[0]), Math.min(a[1],p[1]), Math.max(a[0],p[0]), Math.max(a[1],p[1])];
 });
 $("stage").addEventListener("pointerup", () => {
   if (!S.drawing || !S.drawStart) return;
   S.drawStart = null;
-  if (S.box[2]-S.box[0] < 0.02 || S.box[3]-S.box[1] < 0.02){ S.box = null; return; }
-  S.drawing = false; S.ref = null; S.prev = null; S.prevC = null; $("drawBtn").classList.remove("sel"); $("drawBtn").textContent = "Redraw box";
-  guide("");
+  if (cfg.shape === "poly"){
+    const pts = S.drawPts || []; S.drawPts = null;
+    if (pts.length < 3){ S.box = null; S.shape = null; return; }
+    // keep the outline light: drop points closer than ~1% of the picture
+    const kept = [pts[0]]; for (const q of pts){ const l = kept[kept.length - 1]; if (Math.hypot(q[0] - l[0], q[1] - l[1]) > 0.01) kept.push(q); }
+    S.shape = { type: "poly", pts: kept.map(q => [+q[0].toFixed(4), +q[1].toFixed(4)]) }; S.box = bboxOf(kept);
+  }
+  if (!S.box || S.box[2]-S.box[0] < 0.02 || S.box[3]-S.box[1] < 0.02){ S.box = null; S.shape = null; return; }
+  S.drawing = false; S.ref = null; S.prev = null; S.prevC = null; $("drawBtn").classList.remove("sel"); $("drawBtn").textContent = "Redraw area";
+  $("shapeRow").hidden = true; buildShapeMasks(); guide("");
   persist(); refreshButtons();
 });
+function setShapeButtons(){ document.querySelectorAll("[data-shape]").forEach(b => b.setAttribute("aria-pressed", b.dataset.shape === cfg.shape)); }
+document.querySelectorAll("[data-shape]").forEach(b => b.onclick = () => { cfg.shape = b.dataset.shape; save("cfg", cfg); setShapeButtons(); guide(SHAPE_GUIDE[cfg.shape]); });
 $("drawBtn").onclick = () => {
   if (S.picking) cancelPick();
   S.drawing = !S.drawing; $("drawBtn").classList.toggle("sel", S.drawing);
-  $("drawBtn").textContent = S.drawing ? "Drag on screen…" : (S.box ? "Redraw box" : "Draw box");
-  guide(S.drawing ? "Drag over the parked toolhead (back right corner). Keep the box snug." : "");
+  $("drawBtn").textContent = S.drawing ? "Cancel" : (S.box ? "Redraw area" : "Draw area");
+  $("shapeRow").hidden = !S.drawing; setShapeButtons();
+  if (!S.drawing){ S.drawPts = null; S.drawStart = null; const p = profiles[profName] || {}; S.box = p.box || null; S.shape = p.shape || null; buildShapeMasks(); }
+  guide(S.drawing ? SHAPE_GUIDE[cfg.shape] : "");
 };
 $("markBtn").onclick = () => {
   if (S.marker && !S.picking){ S.marker = null; lastMask = null; persist(); refreshButtons(); guide("Marker removed. Pick a marker or tap Background.", 4000); return; }
@@ -641,31 +718,31 @@ function pickMarker(e){
   grabCrop(null, src); let seen = markerPct(lastRGB);
   if (!(seen >= 1) && S.box){
     const bw = S.box[2] - S.box[0], bh = S.box[3] - S.box[1];
-    grabCrop([u - bw/2, v - bh/2, u + bw/2, v + bh/2], src); seen = markerPct(lastRGB);
+    grabCrop([u - bw/2, v - bh/2, u + bw/2, v + bh/2], src); seen = markerPct(lastRGB, false);
   }
   if (seen && seen >= 1){ cfg.mkMin = Math.max(1, Math.round(seen * 0.45)); save("cfg", cfg); $("sMk").value = cfg.mkMin; $("vMk").textContent = cfg.mkMin + "%"; }
   freeze(false); lastRGB = null; lastMask = null; S.prevC = null;
   persist(); refreshButtons();
-  guide("Marker saved. When the head parks, the box turns green with white dots on the marker.", 7000);
+  guide("Marker saved. When the head parks, the area turns green with white dots on the marker.", 7000);
 }
 $("refBtn").onclick = () => {
   const g = grabCrop(); if (!g) return;
   S.ref = Float32Array.from(g); persist(); refreshButtons();
-  guide("Background saved. Move the head into the box: it should turn green.", 6000);
+  guide("Background saved. Move the head into the area: it should turn green.", 6000);
 };
 
 /* ---------------- profiles ---------------- */
 function persist(){
-  profiles[profName] = { box: S.box, ref: S.ref ? Array.from(S.ref, v => Math.round(v)) : null, marker: S.marker };
+  profiles[profName] = { box: S.box, shape: S.shape, ref: S.ref ? Array.from(S.ref, v => Math.round(v)) : null, marker: S.marker };
   save("profiles", profiles);
 }
 function selectProfile(name){
   profName = name; save("prof", name);
   $("pFront").setAttribute("aria-pressed", name === "front"); $("pTop").setAttribute("aria-pressed", name === "top");
   const p = profiles[name] || {};
-  S.box = p.box || null; S.ref = p.ref ? Float32Array.from(p.ref) : null; S.marker = p.marker || null;
-  S.prev = null; S.prevC = null; S.presence = null; lastMask = null;
-  $("drawBtn").textContent = S.box ? "Redraw box" : "Draw box";
+  S.box = p.box || null; S.shape = p.shape || null; S.ref = p.ref ? Float32Array.from(p.ref) : null; S.marker = p.marker || null;
+  S.prev = null; S.prevC = null; S.presence = null; lastMask = null; buildShapeMasks();
+  $("drawBtn").textContent = S.box ? "Redraw area" : "Draw area";
   refreshButtons(); if (!S.running) guide("");
 }
 $("pFront").onclick = () => !S.running && selectProfile("front");
@@ -894,7 +971,7 @@ $("settings").onclick = e => { if (e.target.id === "settings") $("settings").hid
 
 /* ---------------- misc ---------------- */
 function nextStep(){
-  if (!S.box) return "Step 1 · Tap Draw box, then drag over the spot where the toolhead parks.";
+  if (!S.box) return "Step 1 · Tap Draw area, pick Box, Circle or Free, and mark the spot where the toolhead parks.";
   if (!S.marker && !S.ref) return "Step 2 · Tap Marker, then tap the marker on the toolhead (it can be anywhere).";
   return "Ready · Tap Start timelapse, then start the print.";
 }

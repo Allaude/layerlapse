@@ -40,14 +40,18 @@ anything sticking out on that side will hit the case.
 ## 5. Set up each view (Front / Top)
 
 1. Mount the phone, plug it in, open the app and pick **Front** or **Top**.
-2. **Draw box**: drag a snug box around the head while it is parked in the back-right
-   corner. Keep it tight: in a front view, other right-side spots (the filament cutter,
-   the purge area) look close to the park spot, and a big box takes them in.
+2. **Draw area**, then pick a shape and mark the spot where the head parks in the
+   back-right corner:
+   - **Box**: drag from corner to corner.
+   - **Circle**: touch the centre of the parked marker and drag outward.
+   - **Free**: draw around the parked head with your finger, then lift.
+   Only the inside of the shape is watched, so keep it snug. In a front view, other
+   right-side spots (the filament cutter, the purge area) look close to the park spot.
 3. **Marker**: the picture pauses; tap the marker on the toolhead. It can be
    anywhere on screen, even while the head is moving.
-4. When the head parks, the box turns green with white dots on the marker.
+4. When the head parks, the area turns green with white dots on the marker.
 
-Redo the box whenever you move the phone. Without a marker you can use
+Redraw the area whenever you move the phone. Without a marker you can use
 **Background** instead (tap it while the box is empty), but anything that passes
 through the box, like the X-axis rail, can then trigger a photo.
 
