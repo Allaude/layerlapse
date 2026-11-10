@@ -242,7 +242,7 @@ select{background:var(--bg);border:1px solid var(--line);border-radius:10px;padd
     <input type="range" id="sLen" min="3" max="60" step="1"><p>How long the finished video should be. The speed is worked out from the number of shots (2–60 frames per second). You can still change it after the print.</p></div>
   <div class="field"><label for="sCam">Camera</label><select id="sCam"></select></div>
   <button class="btn" id="closeSettings">Done</button>
-  <p style="margin:0;text-align:center;color:var(--dim);font-size:12px">Radicals LayerLapse · v5.1</p>
+  <p style="margin:0;text-align:center;color:var(--dim);font-size:12px">Radicals LayerLapse · v5.2</p>
 </div></div>
 
 <!-- dim -->
@@ -298,7 +298,7 @@ $("logoImg").onload = () => { $("logoImg").hidden = false; $("wordmark").hidden 
 /* ---------------- state ---------------- */
 const S = {
   box: null, ref: null, marker: null, picking: false, prev: null, prevC: null, presence: null, motion: null, stillSince: 0,
-  drawing: false, drawStart: null, running: false, shots: 0, lastShotT: -99,
+  drawing: false, drawStart: null, edit: null, running: false, shots: 0, lastShotT: -99,
   inVisit: false, visitStart: 0, absentSince: 0, cand: null, candT: 0,
   session: null, lastActivity: Date.now(), wake: null, frames: 0
 };
@@ -624,6 +624,13 @@ function drawOverlay(present){
   octx.fillStyle = col; octx.font = "600 12px system-ui";
   const label = (present ? "HEAD" : "PARK AREA") + (useMarker() ? " · marker" : ""), lw = octx.measureText(label).width;
   octx.fillText(label, Math.max(4, Math.min(x + 2, W - lw - 6)), y - 6 < 12 ? y + h + 16 : y - 6);
+  if (canEdit()){                                   // corner dots: drag to resize, drag inside to move
+    if (sh.type !== "rect"){ octx.setLineDash([5,5]); octx.lineWidth = 1.5; octx.strokeStyle = col + "aa"; octx.strokeRect(x, y, w, h); octx.setLineDash([]); }
+    for (const [hx, hy] of [[x,y],[x+w,y],[x+w,y+h],[x,y+h]]){
+      octx.beginPath(); octx.arc(hx, hy, S.edit?.mode === "resize" ? 9 : 7, 0, Math.PI*2);
+      octx.fillStyle = "#fff"; octx.fill(); octx.lineWidth = 2.5; octx.strokeStyle = col; octx.stroke();
+    }
+  }
   if (useMarker() && lastMask && !S.running){        // show which pixels match the marker colour (setup only)
     const cw = w / CROP, ch = h / CROP; octx.fillStyle = "#ffffffcc";
     for (let j = 0; j < lastMask.length; j++) if (lastMask[j]) octx.fillRect(x + (j % CROP) * cw, y + ((j / CROP) | 0) * ch, Math.max(1, cw*0.6), Math.max(1, ch*0.6));
@@ -635,6 +642,68 @@ function toNorm(e){
   const r = picRect(), b = overlay.getBoundingClientRect();
   return [Math.min(1, Math.max(0, (e.clientX - b.left - r.x) / r.w)), Math.min(1, Math.max(0, (e.clientY - b.top - r.y) / r.h))];
 }
+/* ---- move / resize the saved park area: drag inside it to move, drag a corner dot to resize ---- */
+const HANDLE_PX = 26, MIN_SIDE = 0.03;
+function canEdit(){ return S.box && !S.running && !S.drawing && !S.picking; }
+function boxPx(){ const r = picRect(), [x0,y0,x1,y1] = S.box; return { r, x0: r.x + x0*r.w, y0: r.y + y0*r.h, x1: r.x + x1*r.w, y1: r.y + y1*r.h }; }
+function cornersPx(){ const b = boxPx(); return [[b.x0,b.y0],[b.x1,b.y0],[b.x1,b.y1],[b.x0,b.y1]]; }
+function editHit(e){
+  if (!canEdit()) return null;
+  const o = overlay.getBoundingClientRect(), px = e.clientX - o.left, py = e.clientY - o.top;
+  const cs = cornersPx();
+  for (let i = 0; i < 4; i++) if (Math.hypot(px - cs[i][0], py - cs[i][1]) <= HANDLE_PX) return { mode: "resize", corner: i };
+  const b = boxPx();
+  if (px >= b.x0 && px <= b.x1 && py >= b.y0 && py <= b.y1) return { mode: "move" };
+  return null;
+}
+function startEdit(e, hit){
+  S.edit = { ...hit, p0: toNorm(e), px0: [e.clientX, e.clientY], box0: S.box.slice(),
+             pts0: S.shape?.type === "poly" ? S.shape.pts.map(q => q.slice()) : null, moved: false };
+}
+function applyBox(nb){
+  const E = S.edit, [a0,b0,a1,b1] = E.box0;
+  if (E.pts0){
+    const sx = (nb[2]-nb[0]) / (a1-a0), sy = (nb[3]-nb[1]) / (b1-b0);
+    S.shape = { type: "poly", pts: E.pts0.map(([u,v]) => [+(nb[0] + (u-a0)*sx).toFixed(4), +(nb[1] + (v-b0)*sy).toFixed(4)]) };
+  }
+  S.box = nb;
+}
+function moveEdit(e){
+  const E = S.edit; if (!E) return;
+  if (!E.moved && Math.hypot(e.clientX - E.px0[0], e.clientY - E.px0[1]) < 6) return;
+  E.moved = true;
+  const p = [ (e.clientX - overlay.getBoundingClientRect().left - picRect().x) / picRect().w,
+              (e.clientY - overlay.getBoundingClientRect().top  - picRect().y) / picRect().h ];
+  const [a0,b0,a1,b1] = E.box0, bw = a1-a0, bh = b1-b0;
+  if (E.mode === "move"){
+    let du = p[0] - E.p0[0], dv = p[1] - E.p0[1];
+    du = Math.max(-a0, Math.min(1 - a1, du)); dv = Math.max(-b0, Math.min(1 - b1, dv));
+    applyBox([a0+du, b0+dv, a1+du, b1+dv]);
+  } else if (S.shape?.type === "ellipse"){
+    // circle: keep the centre, grow/shrink evenly so it stays round on screen
+    const R = picRect(), cu = (a0+a1)/2, cv = (b0+b1)/2;
+    const rad = Math.max(Math.abs(p[0]-cu)*R.w, Math.abs(p[1]-cv)*R.h, MIN_SIDE*R.w/2);
+    let ru = rad / R.w, rv = rad / R.h;
+    const k = Math.min(1, cu/ru, (1-cu)/ru, cv/rv, (1-cv)/rv); ru *= k; rv *= k;
+    applyBox([cu-ru, cv-rv, cu+ru, cv+rv]);
+  } else {
+    // box / free: the opposite corner stays put
+    const c = E.corner, left = c === 0 || c === 3, top = c === 0 || c === 1;
+    const u = Math.max(0, Math.min(1, p[0])), v = Math.max(0, Math.min(1, p[1]));
+    const nx0 = left ? Math.min(u, a1 - MIN_SIDE) : a0, nx1 = left ? a1 : Math.max(u, a0 + MIN_SIDE);
+    const ny0 = top ? Math.min(v, b1 - MIN_SIDE) : b0, ny1 = top ? b1 : Math.max(v, b0 + MIN_SIDE);
+    applyBox([nx0, ny0, nx1, ny1]);
+  }
+}
+function endEdit(cancel, e){
+  const E = S.edit; S.edit = null; if (!E) return;
+  if (!E.moved){ if (!cancel && e) tapFocus(e); return; }   // a plain tap: just focus there
+  if (cancel){ S.box = E.box0; if (E.pts0) S.shape = { type: "poly", pts: E.pts0 }; return; }
+  const hadRef = !!S.ref;
+  S.ref = null; S.prev = null; S.prevC = null; S.presence = null; lastMask = null;
+  buildShapeMasks(); persist(); refreshButtons();
+  guide(hadRef ? "Area moved. Tap Background again (with the head away) if you use it." : "Area updated.", 3500);
+}
 const SHAPE_GUIDE = {
   rect: "Box: drag from corner to corner over the parked head.",
   ellipse: "Circle: touch the centre of the parked marker and drag outward.",
@@ -644,13 +713,19 @@ function bboxOf(pts){ const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]); re
 $("stage").addEventListener("pointerdown", e => {
   if (e.target.closest("#camPanel, #topbar")) return;
   if (S.picking){ e.preventDefault(); pickMarker(e); return; }
-  if (!S.drawing){ if (!S.running) tapFocus(e); return; }
+  if (!S.drawing){
+    if (S.running) return;
+    const hit = editHit(e);
+    if (hit){ e.preventDefault(); $("stage").setPointerCapture(e.pointerId); startEdit(e, hit); return; }
+    tapFocus(e); return;
+  }
   e.preventDefault(); $("stage").setPointerCapture(e.pointerId);
   const p = toNorm(e); S.drawStart = p; S.drawStartPx = [e.clientX, e.clientY];
   if (cfg.shape === "poly"){ S.drawPts = [p]; S.box = [...p, ...p]; }
   else { S.drawPts = null; S.shape = { type: cfg.shape }; S.box = [...p, ...p]; }
 });
 $("stage").addEventListener("pointermove", e => {
+  if (S.edit){ moveEdit(e); return; }
   if (!S.drawing || !S.drawStart) return;
   const p = toNorm(e), a = S.drawStart;
   if (cfg.shape === "poly"){
@@ -663,7 +738,9 @@ $("stage").addEventListener("pointermove", e => {
     S.box = [Math.max(0, a[0] - ru), Math.max(0, a[1] - rv), Math.min(1, a[0] + ru), Math.min(1, a[1] + rv)];
   } else S.box = [Math.min(a[0],p[0]), Math.min(a[1],p[1]), Math.max(a[0],p[0]), Math.max(a[1],p[1])];
 });
-$("stage").addEventListener("pointerup", () => {
+$("stage").addEventListener("pointercancel", () => { if (S.edit) endEdit(true); });
+$("stage").addEventListener("pointerup", e => {
+  if (S.edit){ endEdit(false, e); return; }
   if (!S.drawing || !S.drawStart) return;
   S.drawStart = null;
   if (cfg.shape === "poly"){
@@ -756,7 +833,12 @@ function refreshButtons(){
 }
 
 /* ---------------- run ---------------- */
-async function wakeOn(){ try{ S.wake = await navigator.wakeLock?.request("screen"); }catch(e){ S.wake = null; } }
+const IS_IOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+async function wakeOn(){
+  try{ S.wake = await navigator.wakeLock?.request("screen"); }catch(e){ S.wake = null; }
+  if (!S.wake) toast(IS_IOS ? "Keep the screen on: Settings → Display & Brightness → Auto-Lock → Never"
+                            : "This browser can't keep the screen on. Turn off screen timeout while printing.");
+}
 $("startBtn").onclick = async () => {
   await DB.clearAll(); $("resumeRow").hidden = true;                              // only one timelapse is kept
   S.session = "s" + Date.now(); save("session", S.session);
@@ -775,7 +857,11 @@ function stopRun(msg){
   openResults(S.session);
 }
 document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible" && S.running){ wakeOn(); toast("Welcome back. Layers may have been missed while the app was hidden."); }
+  if (document.visibilityState !== "visible") return;
+  // iPhone/Android stop the camera when the app is hidden or the screen locks: bring it back
+  const t = video.srcObject?.getVideoTracks()[0];
+  if (!t || t.readyState === "ended") startCamera(); else video.play().catch(()=>{});
+  if (S.running){ wakeOn(); toast("Welcome back. Layers may have been missed while the app was hidden."); }
 });
 
 /* dim after a minute without touches while recording */
@@ -944,6 +1030,7 @@ $("exportBtn").onclick = async () => {
   R.url = URL.createObjectURL(out.blob); R.file = new File([out.blob], name, { type: out.blob.type });
   $("dlLink").href = R.url; $("dlLink").download = name;
   $("shareBtn").hidden = !(navigator.canShare && navigator.canShare({ files: [R.file] }));
+  if (IS_IOS) $("shareBtn").textContent = "Save to Photos / Share";     // iPhone: the share sheet has "Save Video"
   $("saveRow").hidden = false;
   toast("Video ready (" + (out.blob.size/1e6).toFixed(1) + " MB)");
 };
@@ -973,7 +1060,7 @@ $("settings").onclick = e => { if (e.target.id === "settings") $("settings").hid
 function nextStep(){
   if (!S.box) return "Step 1 · Tap Draw area, pick Box, Circle or Free, and mark the spot where the toolhead parks.";
   if (!S.marker && !S.ref) return "Step 2 · Tap Marker, then tap the marker on the toolhead (it can be anywhere).";
-  return "Ready · Tap Start timelapse, then start the print.";
+  return "Ready · Tap Start timelapse, then start the print. (Drag the area to move it, or its corner dots to resize.)";
 }
 function guide(t, ms){
   const el = $("guide"); el.textContent = t || nextStep();

@@ -20,14 +20,22 @@ The camera only works on an HTTPS page, so the app needs to be hosted.
 
 ## 2. Install on the phone
 
-Open that link in Chrome on the phone, allow the camera, then use the menu (⋮)
-→ **Add to Home screen** / **Install app**. It opens full screen like a normal app.
+**Android:** open that link in Chrome, allow the camera, then menu (⋮)
+→ **Add to Home screen** / **Install app**.
+
+**iPhone:** open that link in **Safari**, allow the camera, then the Share button
+→ **Add to Home Screen**. Before a print, set **Settings → Display & Brightness →
+Auto-Lock → Never** (set it back after) so the screen doesn't lock. The phone has to
+stay unlocked with the app open; the app's black dim screen is almost the same as off
+on the iPhone's OLED. Pick a fixed lens under Settings → Camera (**Back Camera** or
+**Back Ultra Wide Camera**). "Triple"/"Dual" cameras can switch lenses mid-print and
+make the picture jump. To save the video, tap **Save to Photos / Share → Save Video**.
 
 ## 3. Slicer (once)
 
 Replace the contents of Elegoo Slicer → Printer settings → Machine G-code →
 **Layer change G-code** with `park_gcode.txt`, then re-slice your models. Each
-layer, the head retracts a little, lifts, parks in the back-right corner and waits 1.2 seconds.
+layer, the head retracts a little, lifts, parks in the back-left corner and waits 1.2 seconds.
 To hide the small mark where each layer restarts, paint the seam onto a hidden face.
 
 ## 4. Marker (once)
@@ -41,17 +49,19 @@ anything sticking out on that side will hit the case.
 
 1. Mount the phone, plug it in, open the app and pick **Front** or **Top**.
 2. **Draw area**, then pick a shape and mark the spot where the head parks in the
-   back-right corner:
+   back-left corner:
    - **Box**: drag from corner to corner.
    - **Circle**: touch the centre of the parked marker and drag outward.
    - **Free**: draw around the parked head with your finger, then lift.
-   Only the inside of the shape is watched, so keep it snug. In a front view, other
-   right-side spots (the filament cutter, the purge area) look close to the park spot.
+   Only the inside of the shape is watched, so keep it snug. The park is on the left so
+   the head never gets confused with the filament cutter on the right.
 3. **Marker**: the picture pauses; tap the marker on the toolhead. It can be
    anywhere on screen, even while the head is moving.
 4. When the head parks, the area turns green with white dots on the marker.
 
-Redraw the area whenever you move the phone. Without a marker you can use
+To adjust the area, **drag inside it** to move it, or **drag a corner dot** to
+resize it (a circle stays round). A plain tap still focuses. Redraw it only if you
+want a different shape. Without a marker you can use
 **Background** instead (tap it while the box is empty), but anything that passes
 through the box, like the X-axis rail, can then trigger a photo.
 
