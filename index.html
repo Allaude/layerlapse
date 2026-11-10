@@ -1,0 +1,1085 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0e0f10">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<title>LayerLapse</title>
+<style>
+/* Layout: full-bleed camera viewfinder on top; controls in a bottom dock like a camera app.
+   The viewfinder is always dark (it shows the camera); dock, sheets and results follow the theme. */
+:root{
+  --bg:#f2f3f4;           /* dock, results */
+  --surface:#ffffff;      /* buttons, sheets */
+  --line:#d6d9dc;
+  --text:#15171a;
+  --dim:#5c636a;
+  --accent:#ff7a1a;       /* hot PLA orange */
+  --accent-ink:#1a0d00;   /* text on accent */
+  --accent-text:#c2540a;  /* accent used as text on light */
+  --ok:#1e9e55; --warn:#c68a06; --bad:#e0413a;
+  --track:#e3e6e9;
+  --ui: system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --mono: ui-monospace,"SF Mono","Roboto Mono",Menlo,monospace;
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  --bg:#0e0f10; --surface:#17191b; --line:#2a2d30; --text:#eef0ee; --dim:#9a9f9c;
+  --accent-text:#ff8a33; --ok:#43d17a; --warn:#f5b941; --bad:#ff5a52; --track:#000; color-scheme:dark } }
+:root[data-theme="dark"]{
+  --bg:#0e0f10; --surface:#17191b; --line:#2a2d30; --text:#eef0ee; --dim:#9a9f9c;
+  --accent-text:#ff8a33; --ok:#43d17a; --warn:#f5b941; --bad:#ff5a52; --track:#000; color-scheme:dark }
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;background:var(--bg);color:var(--text);font:15px/1.4 var(--ui);overscroll-behavior:none}
+button{font:inherit;color:inherit}
+[hidden]{display:none!important}
+#app{height:100%;display:flex;flex-direction:column}
+
+/* viewfinder (always dark) */
+#stage{position:relative;flex:1;min-height:0;background:#000;overflow:hidden;touch-action:none;color:#fff}
+#video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}
+#overlay{position:absolute;inset:0;width:100%;height:100%}
+#freeze{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000}
+#freezeTag{position:absolute;right:max(12px,env(safe-area-inset-right,0px));bottom:12px;background:var(--accent);color:var(--accent-ink);font:700 12px var(--ui);padding:5px 9px;border-radius:6px;letter-spacing:.04em}
+#topbar{position:absolute;left:0;right:0;top:0;display:flex;gap:8px;align-items:center;justify-content:space-between;
+  padding:calc(env(safe-area-inset-top,0px) + 10px) max(12px,env(safe-area-inset-right,0px)) 10px max(12px,env(safe-area-inset-left,0px));
+  background:linear-gradient(#000b,#0000)}
+.brand{display:flex;flex-direction:column;line-height:1.05;min-width:0}
+.brand img{height:26px;width:auto;max-width:120px;object-fit:contain}
+.wordmark{font:800 17px/1 var(--ui);letter-spacing:.14em;color:#fff}
+.wordmark i{font-style:normal;color:var(--accent)}
+.brand small{font:600 10px var(--ui);letter-spacing:.18em;color:#ffffffb0;text-transform:uppercase;margin-top:3px}
+.seg{display:flex;background:#000a;border:1px solid #ffffff2a;border-radius:999px;padding:3px}
+.seg button{border:0;background:none;padding:6px 14px;border-radius:999px;font-weight:600;font-size:13px;color:#ffffffb0;cursor:pointer}
+.seg button[aria-pressed=true]{background:#fff;color:#111}
+.iconbtn{border:1px solid #ffffff2a;background:#000a;color:#fff;width:38px;height:38px;border-radius:50%;display:grid;place-items:center;cursor:pointer}
+.iconbtn svg{width:18px;height:18px}
+#flash{position:absolute;inset:0;background:#fff;opacity:0;pointer-events:none;transition:opacity .35s}
+#flash.on{opacity:.55;transition:none}
+#camerr{position:absolute;inset:0;display:grid;place-items:center;padding:24px;text-align:center;color:#bbb}
+
+/* dock */
+#dock{background:var(--bg);border-top:1px solid var(--line);
+  padding:12px max(16px,env(safe-area-inset-right,0px)) calc(env(safe-area-inset-bottom,0px) + 14px) max(16px,env(safe-area-inset-left,0px));
+  display:flex;flex-direction:column;gap:10px}
+.status{display:flex;align-items:center;gap:10px;min-height:22px}
+.dot{width:10px;height:10px;border-radius:50%;background:var(--dim);flex:none}
+.dot.ok{background:var(--ok)} .dot.warn{background:var(--warn)} .dot.rec{background:var(--bad);animation:pulse 1.2s infinite}
+@keyframes pulse{50%{opacity:.35}}
+#statusText{font-weight:600;min-width:0}
+.meter{flex:1;height:6px;background:var(--track);border-radius:3px;position:relative;overflow:hidden;min-width:50px}
+.meter i{position:absolute;inset:0 auto 0 0;width:0;background:var(--warn);transition:width .1s}
+.meter.on i{background:var(--ok)}
+.meter u{position:absolute;top:0;bottom:0;width:2px;background:var(--text);opacity:.7}
+.num{font:600 13px var(--mono);color:var(--dim);font-variant-numeric:tabular-nums;min-width:3ch;text-align:right}
+#guide{margin:0;font-size:13.5px;line-height:1.35;min-height:calc(2.7em + 18px);display:flex;align-items:center;color:var(--text);background:var(--surface);border:1px solid var(--line);border-left:3px solid var(--accent);border-radius:8px;padding:8px 10px}
+.row{display:flex;gap:10px}
+.btn{flex:1;border:1px solid var(--line);background:var(--surface);color:var(--text);border-radius:12px;padding:12px 10px;font-weight:600;cursor:pointer;min-height:46px}
+.btn:disabled{opacity:.4;cursor:default}
+a.btn{display:flex;align-items:center;justify-content:center;text-decoration:none}
+.btn.sel{border-color:var(--accent);color:var(--accent-text)}
+.btn.go{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);font-size:17px}
+.btn.stop{background:var(--bad);border-color:var(--bad);color:#fff;font-size:17px}
+.runinfo{display:flex;align-items:center;gap:12px}
+.runinfo .big{font:700 34px var(--mono);font-variant-numeric:tabular-nums;line-height:1}
+.runinfo small{color:var(--dim);display:block;font-size:12.5px}
+#lastThumb{width:64px;height:48px;object-fit:cover;border-radius:6px;border:1px solid var(--line);background:#000}
+button:focus-visible,input:focus-visible,select:focus-visible,a:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+/* camera controls panel (over the viewfinder) */
+#camPanel{position:absolute;left:0;right:0;bottom:0;background:#000d;border-top:1px solid #ffffff22;
+  padding:12px max(16px,env(safe-area-inset-right,0px)) 12px max(16px,env(safe-area-inset-left,0px));display:flex;flex-direction:column;gap:10px}
+.ctl{display:grid;grid-template-columns:72px minmax(0,1fr) 64px;gap:10px;align-items:center;font-size:13px}
+.ctl b{font-weight:600}
+.ctl .chip{border:1px solid #ffffff33;background:#1a1c1e;color:#fff;border-radius:999px;padding:6px 0;font-size:12px;font-weight:600;cursor:pointer}
+.ctl .chip[aria-pressed=true]{border-color:var(--accent);color:var(--accent)}
+.ctl small{color:#aaa;grid-column:2;display:flex;justify-content:space-between;margin-top:-8px;font-size:11px}
+.ctl .num{color:#bbb}
+#camNote{margin:0;color:#bbb;font-size:12px}
+#camPanel .btn{background:#1a1c1e;border-color:#ffffff33;color:#fff}
+
+/* sheets */
+.sheet{position:fixed;inset:0;background:#000a;display:flex;align-items:flex-end;justify-content:center;z-index:20}
+.sheet>div{background:var(--surface);color:var(--text);border-top:1px solid var(--line);border-radius:16px 16px 0 0;width:100%;max-width:560px;max-height:88%;overflow:auto;
+  padding:18px max(18px,env(safe-area-inset-right,0px)) calc(env(safe-area-inset-bottom,0px) + 18px) max(18px,env(safe-area-inset-left,0px));display:flex;flex-direction:column;gap:16px}
+.sheet h2{margin:0;font-size:18px}
+.sheet h3{margin:4px 0 -6px;font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim)}
+.field{display:flex;flex-direction:column;gap:6px}
+.field label{display:flex;justify-content:space-between;gap:10px;font-weight:600}
+.field label span{font:600 13px var(--mono);color:var(--accent-text);white-space:nowrap}
+.field p{margin:0;color:var(--dim);font-size:13px}
+input[type=range]{width:100%;accent-color:var(--accent)}
+select{background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:10px;color:var(--text)}
+.shapeSeg{display:flex;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.shapeSeg button{flex:1;border:0;background:var(--surface);padding:9px;font-weight:600;cursor:pointer;color:var(--dim)}
+.shapeSeg button+button{border-left:1px solid var(--line)}
+.shapeSeg button[aria-pressed=true]{background:var(--accent);color:var(--accent-ink)}
+.themeSeg{display:flex;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.themeSeg button{flex:1;border:0;background:var(--bg);padding:10px;font-weight:600;cursor:pointer;color:var(--dim)}
+.themeSeg button+button{border-left:1px solid var(--line)}
+.themeSeg button[aria-pressed=true]{background:var(--accent);color:var(--accent-ink)}
+
+/* dim */
+#dim{position:fixed;inset:0;background:#000;z-index:30;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;color:#555;cursor:pointer}
+#dim .big{font:700 48px var(--mono);color:#666}
+
+/* results */
+#results{position:fixed;inset:0;background:var(--bg);z-index:15;display:flex;flex-direction:column}
+#results header{display:flex;align-items:center;justify-content:space-between;gap:12px;
+  padding:calc(env(safe-area-inset-top,0px) + 12px) max(16px,env(safe-area-inset-right,0px)) 12px max(16px,env(safe-area-inset-left,0px));border-bottom:1px solid var(--line)}
+#results header h2{margin:0;font-size:18px}
+#results header p{margin:0;color:var(--dim);font-size:13px}
+#playerWrap{flex:1;min-height:0;display:grid;place-items:center;background:#000}
+#player{max-width:100%;max-height:100%}
+#resDock{padding:14px max(16px,env(safe-area-inset-right,0px)) calc(env(safe-area-inset-bottom,0px) + 14px) max(16px,env(safe-area-inset-left,0px));display:flex;flex-direction:column;gap:12px}
+#scrub{width:100%;accent-color:var(--accent)}
+.prog{height:8px;background:var(--track);border-radius:4px;overflow:hidden}
+.prog i{display:block;height:100%;width:0;background:var(--accent)}
+.swatch{display:inline-block;width:14px;height:14px;border-radius:4px;border:1px solid #8886;vertical-align:-2px;margin-right:6px}
+#toast{position:fixed;left:50%;transform:translateX(-50%);top:calc(env(safe-area-inset-top,0px) + 70px);background:var(--text);color:var(--bg);
+  padding:10px 14px;border-radius:10px;font-weight:600;z-index:40;max-width:calc(100% - 32px);text-align:center}
+.confirm{display:flex;flex-direction:column;gap:10px}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="stage">
+    <video id="video" playsinline muted autoplay></video>
+    <canvas id="freeze" hidden></canvas>
+    <canvas id="overlay"></canvas>
+    <div id="freezeTag" hidden>PAUSED · TAP THE MARKER</div>
+    <div id="flash"></div>
+    <div id="camerr" hidden></div>
+    <div id="topbar">
+      <div class="brand" aria-label="Radicals LayerLapse">
+        <img id="logoImg" src="logo.png" alt="Radicals" hidden>
+        <span class="wordmark" id="wordmark">RADIC<i>A</i>LS</span>
+        <small>LayerLapse</small>
+      </div>
+      <div class="seg" role="group" aria-label="View">
+        <button id="pFront" aria-pressed="true">Front</button>
+        <button id="pTop" aria-pressed="false">Top</button>
+      </div>
+      <div style="display:flex;gap:8px">
+        <button class="iconbtn" id="openCam" aria-label="Focus and camera controls">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3.5"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/></svg>
+        </button>
+        <button class="iconbtn" id="openSettings" aria-label="Settings">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+        </button>
+      </div>
+    </div>
+    <div id="camPanel" hidden>
+      <div class="ctl" id="rowFocus"><b>Focus</b><input type="range" id="cFocus" aria-label="Focus distance"><button class="chip" id="cFocusAuto" aria-pressed="true">Auto</button>
+        <small><span>Near</span><span>Far</span></small></div>
+      <div class="ctl" id="rowZoom"><b>Zoom</b><input type="range" id="cZoom" aria-label="Zoom"><span class="num" id="vZoom"></span></div>
+      <div class="ctl" id="rowExp"><b>Brightness</b><input type="range" id="cExp" aria-label="Exposure"><span class="num" id="vExp"></span></div>
+      <p id="camNote"></p>
+      <button class="btn" id="closeCam">Done</button>
+    </div>
+  </div>
+
+  <div id="dock">
+    <div class="status">
+      <span class="dot" id="dot"></span>
+      <span id="statusText">Opening camera…</span>
+      <div class="meter" id="meter"><i id="bar"></i><u id="thrMark"></u></div>
+      <span class="num" id="pval">—</span>
+    </div>
+    <p id="guide"></p>
+
+    <div id="resumeRow" class="row" hidden>
+      <button class="btn" id="resumeOpen">Open last timelapse</button>
+      <button class="btn" id="resumeDiscard">Discard it</button>
+    </div>
+    <div id="shapeRow" class="shapeSeg" role="group" aria-label="Park area shape" hidden>
+      <button data-shape="rect">Box</button><button data-shape="ellipse">Circle</button><button data-shape="poly">Free</button>
+    </div>
+    <div id="setupControls" class="row">
+      <button class="btn" id="drawBtn">Draw area</button>
+      <button class="btn" id="markBtn" disabled>Marker</button>
+      <button class="btn" id="refBtn" disabled>Background</button>
+    </div>
+    <button class="btn go" id="startBtn" disabled>Start timelapse</button>
+
+    <div id="runControls" hidden>
+      <div class="runinfo">
+        <img id="lastThumb" alt="">
+        <div style="flex:1;min-width:0"><div class="big" id="shotCount">0</div><small id="runSub">shots</small></div>
+        <button class="btn stop" id="stopBtn" style="flex:none;padding-inline:22px">Stop</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- settings -->
+<div class="sheet" id="settings" hidden><div>
+  <h2>Settings</h2>
+  <h3>Appearance</h3>
+  <div class="field"><label>Theme</label>
+    <div class="themeSeg" role="group" aria-label="Theme">
+      <button data-theme-btn="system">System</button><button data-theme-btn="light">Light</button><button data-theme-btn="dark">Dark</button>
+    </div></div>
+  <h3>Detection</h3>
+  <div class="field"><label for="sMk">Marker: minimum share of the box <span id="vMk"></span></label>
+    <input type="range" id="sMk" min="1" max="30" step="1"><p>How much of the box must be marker-coloured to count as “head is here”. Set automatically when you pick the marker.</p></div>
+  <div class="field"><label for="sHue">Marker: colour tolerance <span id="vHue"></span></label>
+    <input type="range" id="sHue" min="6" max="40" step="1"><p>How far the colour may drift. Raise it if the marker isn’t found in dim light.</p></div>
+  <div class="field"><label for="sThr">Background: sensitivity <span id="vThr"></span></label>
+    <input type="range" id="sThr" min="4" max="60" step="1"><p>Only used without a marker. Lower = more sensitive.</p></div>
+  <div class="field"><label for="sSettle">Hold still before shooting <span id="vSettle"></span></label>
+    <input type="range" id="sSettle" min="0.1" max="0.8" step="0.1"><p>How long the parked head must be still before the photo. 0.3 s suits the 1.2 s park.</p></div>
+  <div class="field"><label for="sMax">Longest park <span id="vMax"></span></label>
+    <input type="range" id="sMax" min="2" max="8" step="0.5"><p>Stops longer than this (colour changes, purge, the head resting after the print) are not used as frames.</p></div>
+  <div class="field"><label for="sGap">Minimum time between shots <span id="vGap"></span></label>
+    <input type="range" id="sGap" min="0.5" max="5" step="0.5"><p>Leave it at 1 s. Higher values skip fast layers.</p></div>
+  <div class="field"><label for="sAuto">Auto-stop when no new shot <span id="vAuto"></span></label>
+    <input type="range" id="sAuto" min="0" max="30" step="1"><p>0 = off. Stops recording on its own after the print ends.</p></div>
+  <h3>Video</h3>
+  <div class="field"><label for="sLen">Video length <span id="vLen"></span></label>
+    <input type="range" id="sLen" min="3" max="60" step="1"><p>How long the finished video should be. The speed is worked out from the number of shots (2–60 frames per second). You can still change it after the print.</p></div>
+  <div class="field"><label for="sCam">Camera</label><select id="sCam"></select></div>
+  <button class="btn" id="closeSettings">Done</button>
+  <p style="margin:0;text-align:center;color:var(--dim);font-size:12px">Radicals LayerLapse · v5.2</p>
+</div></div>
+
+<!-- dim -->
+<div id="dim" hidden><div class="big" id="dimCount">0</div><div id="dimSub">shots · tap to wake</div></div>
+
+<!-- results -->
+<div id="results" hidden>
+  <header><div><h2 id="resTitle">Timelapse</h2><p id="resSub"></p></div>
+    <button class="btn" id="newBtn" style="flex:none">New</button></header>
+  <div id="playerWrap"><canvas id="player"></canvas></div>
+  <div id="resDock">
+    <input type="range" id="scrub" min="0" value="0" aria-label="Frame">
+    <div class="field"><label for="rLen">Video length <span id="rLenV"></span></label>
+      <input type="range" id="rLen" min="3" max="60" step="1"></div>
+    <div class="row"><button class="btn" id="playBtn">Play</button><button class="btn go" id="exportBtn">Make video</button></div>
+    <div id="exporting" hidden><div class="prog"><i id="expBar"></i></div><p id="expText" style="margin:6px 0 0;color:var(--dim);font-size:13px">Making the video… keep the app open.</p></div>
+    <div id="saveRow" class="row" hidden><button class="btn go" id="shareBtn">Save / Share</button><a class="btn" id="dlLink">Download</a></div>
+    <div id="newConfirm" class="confirm" hidden><p style="margin:0">This deletes the shots of this timelapse. Continue?</p>
+      <div class="row"><button class="btn" id="newNo">Keep</button><button class="btn stop" id="newYes">Delete and start new</button></div></div>
+  </div>
+</div>
+<div id="toast" hidden></div>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const video = $("video"), overlay = $("overlay"), octx = overlay.getContext("2d");
+const CROP = 48;
+
+/* ---------------- settings & profiles (per phone, in localStorage) ---------------- */
+const DEFAULTS = { thr: 18, mkMin: 3, hueTol: 18, settle: 0.3, gap: 1.0, maxPark: 3.5, auto: 10, vidLen: 15, shape: "ellipse", cam: "", camCtl: {}, theme: "system", v: 5 };
+function load(k, d){ try{ const v = localStorage.getItem("ll_"+k); return v ? JSON.parse(v) : d; }catch(e){ return d; } }
+function save(k, v){ try{ localStorage.setItem("ll_"+k, JSON.stringify(v)); }catch(e){} }
+let cfg = Object.assign({}, DEFAULTS, load("cfg", {}));
+if ((cfg.v || 0) < 4){ cfg.gap = DEFAULTS.gap; cfg.settle = Math.min(cfg.settle, DEFAULTS.settle); cfg.v = 4; save("cfg", cfg); }  // old defaults caused missed fast layers
+if (!(cfg.gap <= 5)){ cfg.gap = DEFAULTS.gap; save("cfg", cfg); }            // anything above 5 s skips fast layers
+if (cfg.v < 5){ if (!(cfg.settle <= 0.8)) cfg.settle = DEFAULTS.settle; cfg.maxPark = DEFAULTS.maxPark; cfg.v = 5; save("cfg", cfg); }  // a settle as long as the park itself shot the head while leaving
+let profiles = load("profiles", {});           // {front:{box,ref,marker}, top:{...}}
+let profName = load("prof", "front");
+
+/* ---------------- theme ---------------- */
+function applyTheme(t){
+  if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t);
+  else document.documentElement.removeAttribute("data-theme");
+  document.querySelectorAll("[data-theme-btn]").forEach(b => b.setAttribute("aria-pressed", b.dataset.themeBtn === t));
+}
+document.querySelectorAll("[data-theme-btn]").forEach(b => b.onclick = () => { cfg.theme = b.dataset.themeBtn; save("cfg", cfg); applyTheme(cfg.theme); });
+applyTheme(cfg.theme);
+
+/* ---------------- brand: use logo.png from the site if it exists ---------------- */
+$("logoImg").onload = () => { $("logoImg").hidden = false; $("wordmark").hidden = true; };
+
+/* ---------------- state ---------------- */
+const S = {
+  box: null, ref: null, marker: null, picking: false, prev: null, prevC: null, presence: null, motion: null, stillSince: 0,
+  drawing: false, drawStart: null, edit: null, running: false, shots: 0, lastShotT: -99,
+  inVisit: false, visitStart: 0, absentSince: 0, cand: null, candT: 0,
+  session: null, lastActivity: Date.now(), wake: null, frames: 0
+};
+
+/* ---------------- storage of shots (IndexedDB, memory fallback) ---------------- */
+const DB = (() => {
+  let dbp = null; const mem = [];
+  function open(){
+    if (dbp) return dbp;
+    dbp = new Promise(res => {
+      try{
+        const r = indexedDB.open("layerlapse", 1);
+        r.onupgradeneeded = () => r.result.createObjectStore("frames", { keyPath: "id", autoIncrement: true }).createIndex("s", "session");
+        r.onsuccess = () => res(r.result); r.onerror = () => res(null);
+      }catch(e){ res(null); }
+    });
+    return dbp;
+  }
+  async function tx(mode, fn){
+    const db = await open(); if (!db) return fn(null);
+    return new Promise((res, rej) => { const t = db.transaction("frames", mode); const out = fn(t.objectStore("frames")); t.oncomplete = () => res(out); t.onerror = () => rej(t.error); });
+  }
+  return {
+    async add(session, blob){ const db = await open(); if (!db){ mem.push({session, blob}); return; } await tx("readwrite", s => s.add({ session, blob, t: Date.now() })); },
+    async list(session){
+      const db = await open(); if (!db) return mem.filter(f => f.session === session).map(f => f.blob);
+      return new Promise(res => { const t = db.transaction("frames"); const r = t.objectStore("frames").index("s").getAll(session); r.onsuccess = () => res(r.result.sort((a,b)=>a.id-b.id).map(f => f.blob)); r.onerror = () => res([]); });
+    },
+    async clearAll(){                      // one timelapse is kept at a time, so wiping the store is the fast way to delete
+      const db = await open(); if (!db){ mem.length = 0; return; }
+      await tx("readwrite", s => { s.clear(); });
+    }
+  };
+})();
+
+/* ---------------- camera ---------------- */
+async function startCamera(){
+  if (video.srcObject) video.srcObject.getTracks().forEach(t => t.stop());
+  const v = { width: { ideal: 1920 }, height: { ideal: 1080 } };
+  if (cfg.cam) v.deviceId = { exact: cfg.cam }; else v.facingMode = { ideal: "environment" };
+  try{
+    const stream = await navigator.mediaDevices.getUserMedia({ video: v, audio: false });
+    video.srcObject = stream; await video.play().catch(()=>{});
+    await applySavedCam();
+    $("camerr").hidden = true;
+    fillCameras();
+  }catch(e){
+    if (cfg.cam){ cfg.cam = ""; save("cfg", cfg); return startCamera(); }
+    $("camerr").hidden = false;
+    $("camerr").textContent = !window.isSecureContext
+      ? "The camera only works when this page is opened over HTTPS."
+      : "Can't open the camera. Allow camera access in the browser settings, then reload.";
+    setStatus("No camera", "");
+  }
+}
+async function fillCameras(){
+  try{
+    const devs = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === "videoinput");
+    const sel = $("sCam"); sel.innerHTML = "";
+    const cur = video.srcObject?.getVideoTracks()[0]?.getSettings().deviceId;
+    devs.forEach((d, i) => { const o = document.createElement("option"); o.value = d.deviceId; o.textContent = d.label || ("Camera " + (i+1)); if (d.deviceId === cur) o.selected = true; sel.appendChild(o); });
+  }catch(e){}
+}
+
+/* ---- focus / zoom / exposure (only what this phone's browser supports) ---- */
+const track = () => video.srcObject?.getVideoTracks()[0];
+function caps(){ try{ return track()?.getCapabilities?.() || {}; }catch(e){ return {}; } }
+async function camSet(c, quiet){
+  try{ await track().applyConstraints({ advanced: [c] }); Object.assign(cfg.camCtl, c); save("cfg", cfg); return true; }
+  catch(e){ if (!quiet) toast("The camera didn't accept that setting."); return false; }
+}
+async function applySavedCam(){
+  const c = caps(), k = cfg.camCtl || {}, want = {};
+  if (k.zoom != null && c.zoom) want.zoom = k.zoom;
+  if (k.exposureCompensation != null && c.exposureCompensation) want.exposureCompensation = k.exposureCompensation;
+  if (k.focusMode === "manual" && c.focusDistance && c.focusMode?.includes("manual")){ want.focusMode = "manual"; want.focusDistance = k.focusDistance; }
+  if (Object.keys(want).length) await camSet(want, true);
+}
+function setupRange(el, cap, val, fmt, out){
+  el.min = cap.min; el.max = cap.max; el.step = cap.step || (cap.max - cap.min) / 100; el.value = val ?? cap.min;
+  if (out) out.textContent = fmt(el.value);
+}
+function openCamPanel(){
+  const c = caps(), st = (() => { try{ return track()?.getSettings() || {}; }catch(e){ return {}; } })();
+  const canFocus = !!(c.focusDistance && c.focusMode?.includes("manual"));
+  $("rowFocus").hidden = !canFocus; $("rowZoom").hidden = !c.zoom; $("rowExp").hidden = !c.exposureCompensation;
+  if (canFocus){
+    setupRange($("cFocus"), c.focusDistance, st.focusDistance ?? cfg.camCtl.focusDistance);
+    $("cFocusAuto").setAttribute("aria-pressed", st.focusMode !== "manual");
+  }
+  if (c.zoom) setupRange($("cZoom"), c.zoom, st.zoom, v => (+v).toFixed(1) + "×", $("vZoom"));
+  if (c.exposureCompensation) setupRange($("cExp"), c.exposureCompensation, st.exposureCompensation, v => (+v > 0 ? "+" : "") + (+v).toFixed(1), $("vExp"));
+  const tap = c.focusMode?.includes("single-shot");
+  $("camNote").textContent = !canFocus && !c.zoom && !c.exposureCompensation
+    ? "This browser doesn't offer focus or zoom controls for this camera. Try another lens under Settings → Camera, or tap the screen to focus."
+    : (canFocus ? "Slide Focus while watching the print until it's sharp. " : "No manual focus on this camera. ") + (tap ? "You can also tap the screen to focus there." : "");
+  $("camPanel").hidden = false;
+}
+$("openCam").onclick = () => $("camPanel").hidden ? openCamPanel() : ($("camPanel").hidden = true);
+$("closeCam").onclick = () => { $("camPanel").hidden = true; };
+$("cFocus").oninput = e => { $("cFocusAuto").setAttribute("aria-pressed", "false"); camSet({ focusMode: "manual", focusDistance: +e.target.value }, true); };
+$("cFocusAuto").onclick = async () => { if (await camSet({ focusMode: "continuous" })){ cfg.camCtl.focusMode = "continuous"; save("cfg", cfg); $("cFocusAuto").setAttribute("aria-pressed", "true"); } };
+$("cZoom").oninput = e => { $("vZoom").textContent = (+e.target.value).toFixed(1) + "×"; camSet({ zoom: +e.target.value }, true); };
+$("cExp").oninput = e => { const v = +e.target.value; $("vExp").textContent = (v > 0 ? "+" : "") + v.toFixed(1); camSet({ exposureCompensation: v }, true); };
+async function tapFocus(e){
+  const c = caps(); if (!c.focusMode?.includes("single-shot")) return;
+  const [x, y] = toNorm(e);
+  if (await camSet({ focusMode: "single-shot", pointsOfInterest: [{ x, y }] }, true)) toast("Focused where you tapped");
+}
+
+/* where the video picture actually sits inside the element (object-fit: contain) */
+function picRect(){
+  const W = overlay.clientWidth, H = overlay.clientHeight, vw = video.videoWidth || 16, vh = video.videoHeight || 9;
+  const s = Math.min(W / vw, H / vh), w = vw * s, h = vh * s;
+  return { x: (W - w) / 2, y: (H - h) / 2, w, h };
+}
+
+/* ---------------- detection ---------------- */
+const acan = document.createElement("canvas"); acan.width = acan.height = CROP;
+const actx = acan.getContext("2d", { willReadFrequently: true });
+let lastRGB = null, lastMask = null;
+function grabCrop(rect, src){
+  const vw = video.videoWidth, vh = video.videoHeight; rect = rect || S.box; if (!vw || !rect) return null;
+  const [x0, y0, x1, y1] = rect;
+  actx.clearRect(0, 0, CROP, CROP);
+  actx.drawImage(src || video, x0*vw, y0*vh, Math.max(2,(x1-x0)*vw), Math.max(2,(y1-y0)*vh), 0, 0, CROP, CROP);
+  const d = actx.getImageData(0, 0, CROP, CROP).data, g = new Uint8Array(CROP*CROP);
+  for (let i = 0, j = 0; i < d.length; i += 4, j++) g[j] = (d[i]*77 + d[i+1]*150 + d[i+2]*29) >> 8;
+  lastRGB = d;
+  return g;
+}
+
+/* ---- park area shape (box, circle or free-drawn). Detection runs on the 48x48 crop of its bounding box,
+        counting only pixels inside the shape. ---- */
+let shapeMask = null, innerMask = null, shapeCount = CROP * CROP;
+function buildShapeMasks(){
+  shapeMask = innerMask = null; shapeCount = CROP * CROP;
+  if (!S.box) return;
+  const cv = document.createElement("canvas"); cv.width = cv.height = CROP; const x = cv.getContext("2d");
+  const sh = S.shape || { type: "rect" }, [x0, y0, x1, y1] = S.box;
+  x.fillStyle = "#fff"; x.beginPath();
+  if (sh.type === "ellipse") x.ellipse(CROP/2, CROP/2, CROP/2, CROP/2, 0, 0, Math.PI * 2);
+  else if (sh.type === "poly" && sh.pts && sh.pts.length > 2){
+    sh.pts.forEach(([u, v], i) => { const px = (u - x0) / (x1 - x0) * CROP, py = (v - y0) / (y1 - y0) * CROP; i ? x.lineTo(px, py) : x.moveTo(px, py); });
+    x.closePath();
+  } else x.rect(0, 0, CROP, CROP);
+  x.fill();
+  const d = x.getImageData(0, 0, CROP, CROP).data; shapeMask = new Uint8Array(CROP * CROP); let n = 0;
+  for (let j = 0; j < shapeMask.length; j++) if (d[j*4 + 3] > 127){ shapeMask[j] = 1; n++; }
+  shapeCount = Math.max(1, n);
+  // inner area = the shape shrunk inwards, so a marker only touching the edge doesn't count as "arrived"
+  for (let r = Math.round(CROP * 0.15); r >= 1; r--){
+    const offs = []; for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) if (dx*dx + dy*dy <= r*r) offs.push([dx, dy]);
+    const m = new Uint8Array(CROP * CROP); let k = 0;
+    for (let y = 0; y < CROP; y++) for (let xx = 0; xx < CROP; xx++){
+      if (!shapeMask[y*CROP + xx]) continue;
+      let ok = true;
+      for (const [dx, dy] of offs){ const X = xx + dx, Y = y + dy; if (X < 0 || Y < 0 || X >= CROP || Y >= CROP || !shapeMask[Y*CROP + X]){ ok = false; break; } }
+      if (ok){ m[y*CROP + xx] = 1; k++; }
+    }
+    if (k >= n * 0.15 || r === 1){ innerMask = k ? m : shapeMask; break; }
+  }
+}
+const inShape = (m, c) => !!c && (!m || m[Math.min(CROP-1, c[1] | 0) * CROP + Math.min(CROP-1, c[0] | 0)] === 1);
+
+/* marker colour matching (hue based, so it survives light changes) */
+function rgb2hsv(r, g, b){
+  r /= 255; g /= 255; b /= 255;
+  const mx = Math.max(r,g,b), mn = Math.min(r,g,b), d = mx - mn;
+  let h = 0;
+  if (d){ if (mx === r) h = ((g-b)/d) % 6; else if (mx === g) h = (b-r)/d + 2; else h = (r-g)/d + 4; h *= 60; if (h < 0) h += 360; }
+  return [h, mx ? d/mx : 0, mx];
+}
+function markerMask(d, shaped = true){
+  const m = S.marker; if (!m || !d) return null;
+  const sm = shaped ? shapeMask : null;
+  const sMin = Math.max(0.2, m.s * 0.42), vMin = Math.max(0.1, m.v * 0.32), out = new Uint8Array(d.length / 4);
+  for (let i = 0, j = 0; i < d.length; i += 4, j++){
+    if (sm && !sm[j]) continue;
+    const [h, sat, v] = rgb2hsv(d[i], d[i+1], d[i+2]);
+    if (sat < sMin || v < vMin) continue;
+    const dh = Math.abs(h - m.h); if (Math.min(dh, 360 - dh) <= cfg.hueTol) out[j] = 1;
+  }
+  // drop isolated pixels (sensor noise): keep a pixel only if at least 2 of its 4 neighbours match too
+  const clean = new Uint8Array(out.length);
+  for (let y = 0; y < CROP; y++) for (let x = 0; x < CROP; x++){
+    const j = y*CROP + x; if (!out[j]) continue;
+    const n = (x > 0 && out[j-1]) + (x < CROP-1 && out[j+1]) + (y > 0 && out[j-CROP]) + (y < CROP-1 && out[j+CROP]);
+    if (n >= 2) clean[j] = 1;
+  }
+  return clean;
+}
+function maskStats(mask, shaped = true){
+  let n = 0, sx = 0, sy = 0;
+  for (let j = 0; j < mask.length; j++) if (mask[j]){ n++; sx += j % CROP; sy += (j / CROP) | 0; }
+  return { pct: n / (shaped && shapeMask ? shapeCount : mask.length) * 100, c: n ? [sx/n, sy/n] : null };
+}
+function markerPct(d, shaped = true){ const m = markerMask(d, shaped); return m ? maskStats(m, shaped).pct : null; }
+function madShape(a, b){ if (!shapeMask) return mad(a, b); let s = 0; for (let i = 0; i < a.length; i++) if (shapeMask[i]) s += Math.abs(a[i] - b[i]); return s / shapeCount; }
+function useMarker(){ return !!S.marker; }
+function thrNow(){ return useMarker() ? cfg.mkMin : cfg.thr; }
+function meterMax(){ return useMarker() ? Math.max(20, cfg.mkMin * 4) : 80; }
+function mad(a, b){ let s = 0; for (let i = 0; i < a.length; i++) s += Math.abs(a[i] - b[i]); return s / a.length; }
+/* 12x12 block average: motion measured on this ignores per-pixel sensor noise */
+function blocks(g){
+  const B = 12, k = CROP / B, out = new Float32Array(B*B);
+  for (let y = 0; y < CROP; y++) for (let x = 0; x < CROP; x++) out[((y/k)|0)*B + ((x/k)|0)] += g[y*CROP + x];
+  for (let i = 0; i < out.length; i++) out[i] /= k*k;
+  return out;
+}
+const STILL_PX = 1.2;      // marker centroid may move this many crop pixels (~2.5% of the box) and still count as still
+const STILL_BG = 3.0;      // block-averaged brightness change that still counts as still
+
+function analyse(){
+  const now = performance.now() / 1000;
+  const g = grabCrop();
+  if (g){
+    if (useMarker()){
+      lastMask = markerMask(lastRGB);
+      const st = maskStats(lastMask);
+      S.presence = st.pct;
+      S.motion = st.c && S.prevC ? Math.hypot(st.c[0]-S.prevC[0], st.c[1]-S.prevC[1]) : null;
+      S.prevC = st.c;
+      const still = S.motion !== null && S.motion <= STILL_PX;
+      if (still){ if (!S.stillSince) S.stillSince = now; } else S.stillSince = 0;
+    } else {
+      const b = blocks(g);
+      S.motion = S.prev ? mad(b, S.prev) : null; S.prev = b;
+      if (S.motion !== null && S.motion <= STILL_BG){ if (!S.stillSince) S.stillSince = now; } else S.stillSince = 0;
+      if (S.ref){
+        S.presence = madShape(g, S.ref);
+        if (S.presence < cfg.thr * 0.5 && S.stillSince && now - S.stillSince > 2){ for (let i = 0; i < g.length; i++) S.ref[i] = (S.ref[i]*4 + g[i]) / 5; }
+      } else S.presence = null;
+    }
+    S.frames++;
+  }
+  // ---- where is the head? ----
+  const thr = thrNow(), c = useMarker() ? S.prevC : null;
+  const inside = !useMarker() || inShape(shapeMask, c);
+  const inner = !useMarker() || inShape(innerMask, c);
+  const enter = S.presence !== null && S.presence >= thr && inner;              // arriving: marker clearly in the middle of the box
+  const stay  = S.presence !== null && S.presence >= thr * 0.5 && inside;      // staying: looser, so a flicker doesn't end the park
+  const present = S.inVisit ? stay : enter;
+  const stillFor = S.stillSince ? now - S.stillSince : 0;
+
+  // ---- one visit = the head arriving, staying, and leaving again ----
+  if (present){
+    S.absentSince = 0;
+    if (!S.inVisit){ S.inVisit = true; S.visitStart = now; S.cand = null; S.candT = 0; }
+  } else if (S.inVisit){
+    if (!S.absentSince) S.absentSince = now;
+    if (now - S.absentSince > 0.25) endVisit(S.absentSince - S.visitStart);
+  }
+  // the parked head moved off its spot (e.g. on to the cutter) without leaving the box: that park is over
+  if (S.inVisit && S.cand && S.candC && c && Math.hypot(c[0] - S.candC[0], c[1] - S.candC[1]) > CROP * 0.2){
+    endVisit(now - S.visitStart); S.inVisit = true; S.visitStart = now;
+  }
+  if (S.inVisit && S.running){
+    const stayed = now - S.visitStart;
+    // the photo is taken the moment the head is parked: centred in the box and still (or settled in for a moment)
+    if (!S.cand && inner && (stillFor >= cfg.settle || stayed >= cfg.settle + 0.5) && stayed <= cfg.maxPark && now - S.lastShotT >= cfg.gap) grabCandidate(now);
+    if (stayed > cfg.maxPark) S.cand = null;      // too long for a park: colour change, purge, or the head resting after the print
+  }
+  if (S.running && cfg.auto > 0 && S.shots > 0 && now - S.lastShotT > cfg.auto * 60) stopRun("Auto-stop: no new shot for " + cfg.auto + " min.");
+  renderStatus(present, stillFor >= cfg.settle);
+}
+
+function grabCandidate(now){
+  const vw = video.videoWidth, vh = video.videoHeight;
+  const c = document.createElement("canvas"); c.width = vw; c.height = vh;
+  c.getContext("2d").drawImage(video, 0, 0, vw, vh);
+  S.cand = new Promise(r => c.toBlob(r, "image/jpeg", 0.88)); S.candT = now; S.candC = S.prevC ? S.prevC.slice() : null;
+  const f = $("flash"); f.classList.add("on"); requestAnimationFrame(() => requestAnimationFrame(() => f.classList.remove("on")));
+}
+/* the head has left the box: keep the photo only if the stay looked like a park (not a pass-by, not a long stop) */
+function endVisit(dur){
+  const cand = S.cand, t = S.candT;
+  S.inVisit = false; S.absentSince = 0; S.cand = null;
+  if (S.running && cand && dur >= 0.5 && dur <= cfg.maxPark) commitShot(cand, t);
+}
+async function commitShot(cand, t){
+  S.shots++; S.lastShotT = t;
+  $("shotCount").textContent = S.shots; $("dimCount").textContent = S.shots;
+  const blob = await cand, session = S.session;
+  if (!blob){ S.shots--; $("shotCount").textContent = S.shots; toast("A shot couldn't be saved."); return; }
+  await DB.add(session, blob);
+  const u = URL.createObjectURL(blob); const old = $("lastThumb").src; $("lastThumb").src = u; if (old.startsWith("blob:")) URL.revokeObjectURL(old);
+}
+function updateRunSub(){ $("runSub").textContent = "shots · " + (profName === "top" ? "Top" : "Front") + " view"; }
+
+/* ---------------- UI: status + overlay ---------------- */
+function setStatus(t, cls){ $("statusText").textContent = t; $("dot").className = "dot " + (cls||""); }
+function renderStatus(present, still){
+  const m = $("meter");
+  $("thrMark").style.left = Math.min(100, thrNow() / meterMax() * 100) + "%";
+  if (S.presence === null){ $("bar").style.width = "0"; $("pval").textContent = "—"; m.classList.remove("on"); }
+  else { $("bar").style.width = Math.min(100, S.presence / meterMax() * 100) + "%"; $("pval").textContent = S.presence.toFixed(0) + (useMarker() ? "%" : ""); m.classList.toggle("on", present); }
+  if (S.running){
+    setStatus(present ? (still ? "Head parked ✓" : "Head in area, waiting for it to stop") : "Recording · waiting for the head", "rec");
+  } else if (!video.videoWidth){ /* camera not ready */ }
+  else if (S.picking) setStatus("Picking marker", "warn");
+  else if (S.drawing) setStatus("Drawing park area", "warn");
+  else if (!S.box) setStatus("Not set up", "");
+  else if (!S.ref && !S.marker) setStatus("Area set · no marker", "warn");
+  else setStatus(present ? (still ? "Head parked ✓ ready" : "Head in area, moving") : "Ready · area is empty", "ok");
+  drawOverlay(present);
+}
+function drawOverlay(present){
+  const W = overlay.clientWidth, H = overlay.clientHeight, dpr = devicePixelRatio || 1;
+  if (overlay.width !== Math.round(W*dpr) || overlay.height !== Math.round(H*dpr)){ overlay.width = Math.round(W*dpr); overlay.height = Math.round(H*dpr); }
+  octx.setTransform(dpr,0,0,dpr,0,0); octx.clearRect(0,0,W,H);
+  if (!S.box) return;
+  const r = picRect(), [x0,y0,x1,y1] = S.box;
+  const x = r.x + x0*r.w, y = r.y + y0*r.h, w = (x1-x0)*r.w, h = (y1-y0)*r.h;
+  const col = S.drawing ? "#ff7a1a" : present ? "#43d17a" : "#f5b941";
+  const sh = S.drawPts ? { type: "poly", pts: S.drawPts } : (S.shape || { type: "rect" });
+  octx.beginPath();
+  if (sh.type === "ellipse") octx.ellipse(x + w/2, y + h/2, w/2, h/2, 0, 0, Math.PI * 2);
+  else if (sh.type === "poly" && sh.pts && sh.pts.length > 1){ sh.pts.forEach(([u, v], i) => { const px = r.x + u*r.w, py = r.y + v*r.h; i ? octx.lineTo(px, py) : octx.moveTo(px, py); }); if (!S.drawPts) octx.closePath(); }
+  else octx.rect(x, y, w, h);
+  octx.fillStyle = col + "26"; octx.fill();
+  octx.lineWidth = 3; octx.lineJoin = "round"; octx.strokeStyle = col; octx.stroke();
+  octx.fillStyle = col; octx.font = "600 12px system-ui";
+  const label = (present ? "HEAD" : "PARK AREA") + (useMarker() ? " · marker" : ""), lw = octx.measureText(label).width;
+  octx.fillText(label, Math.max(4, Math.min(x + 2, W - lw - 6)), y - 6 < 12 ? y + h + 16 : y - 6);
+  if (canEdit()){                                   // corner dots: drag to resize, drag inside to move
+    if (sh.type !== "rect"){ octx.setLineDash([5,5]); octx.lineWidth = 1.5; octx.strokeStyle = col + "aa"; octx.strokeRect(x, y, w, h); octx.setLineDash([]); }
+    for (const [hx, hy] of [[x,y],[x+w,y],[x+w,y+h],[x,y+h]]){
+      octx.beginPath(); octx.arc(hx, hy, S.edit?.mode === "resize" ? 9 : 7, 0, Math.PI*2);
+      octx.fillStyle = "#fff"; octx.fill(); octx.lineWidth = 2.5; octx.strokeStyle = col; octx.stroke();
+    }
+  }
+  if (useMarker() && lastMask && !S.running){        // show which pixels match the marker colour (setup only)
+    const cw = w / CROP, ch = h / CROP; octx.fillStyle = "#ffffffcc";
+    for (let j = 0; j < lastMask.length; j++) if (lastMask[j]) octx.fillRect(x + (j % CROP) * cw, y + ((j / CROP) | 0) * ch, Math.max(1, cw*0.6), Math.max(1, ch*0.6));
+  }
+}
+
+/* ---------------- setup: box, marker, background ---------------- */
+function toNorm(e){
+  const r = picRect(), b = overlay.getBoundingClientRect();
+  return [Math.min(1, Math.max(0, (e.clientX - b.left - r.x) / r.w)), Math.min(1, Math.max(0, (e.clientY - b.top - r.y) / r.h))];
+}
+/* ---- move / resize the saved park area: drag inside it to move, drag a corner dot to resize ---- */
+const HANDLE_PX = 26, MIN_SIDE = 0.03;
+function canEdit(){ return S.box && !S.running && !S.drawing && !S.picking; }
+function boxPx(){ const r = picRect(), [x0,y0,x1,y1] = S.box; return { r, x0: r.x + x0*r.w, y0: r.y + y0*r.h, x1: r.x + x1*r.w, y1: r.y + y1*r.h }; }
+function cornersPx(){ const b = boxPx(); return [[b.x0,b.y0],[b.x1,b.y0],[b.x1,b.y1],[b.x0,b.y1]]; }
+function editHit(e){
+  if (!canEdit()) return null;
+  const o = overlay.getBoundingClientRect(), px = e.clientX - o.left, py = e.clientY - o.top;
+  const cs = cornersPx();
+  for (let i = 0; i < 4; i++) if (Math.hypot(px - cs[i][0], py - cs[i][1]) <= HANDLE_PX) return { mode: "resize", corner: i };
+  const b = boxPx();
+  if (px >= b.x0 && px <= b.x1 && py >= b.y0 && py <= b.y1) return { mode: "move" };
+  return null;
+}
+function startEdit(e, hit){
+  S.edit = { ...hit, p0: toNorm(e), px0: [e.clientX, e.clientY], box0: S.box.slice(),
+             pts0: S.shape?.type === "poly" ? S.shape.pts.map(q => q.slice()) : null, moved: false };
+}
+function applyBox(nb){
+  const E = S.edit, [a0,b0,a1,b1] = E.box0;
+  if (E.pts0){
+    const sx = (nb[2]-nb[0]) / (a1-a0), sy = (nb[3]-nb[1]) / (b1-b0);
+    S.shape = { type: "poly", pts: E.pts0.map(([u,v]) => [+(nb[0] + (u-a0)*sx).toFixed(4), +(nb[1] + (v-b0)*sy).toFixed(4)]) };
+  }
+  S.box = nb;
+}
+function moveEdit(e){
+  const E = S.edit; if (!E) return;
+  if (!E.moved && Math.hypot(e.clientX - E.px0[0], e.clientY - E.px0[1]) < 6) return;
+  E.moved = true;
+  const p = [ (e.clientX - overlay.getBoundingClientRect().left - picRect().x) / picRect().w,
+              (e.clientY - overlay.getBoundingClientRect().top  - picRect().y) / picRect().h ];
+  const [a0,b0,a1,b1] = E.box0, bw = a1-a0, bh = b1-b0;
+  if (E.mode === "move"){
+    let du = p[0] - E.p0[0], dv = p[1] - E.p0[1];
+    du = Math.max(-a0, Math.min(1 - a1, du)); dv = Math.max(-b0, Math.min(1 - b1, dv));
+    applyBox([a0+du, b0+dv, a1+du, b1+dv]);
+  } else if (S.shape?.type === "ellipse"){
+    // circle: keep the centre, grow/shrink evenly so it stays round on screen
+    const R = picRect(), cu = (a0+a1)/2, cv = (b0+b1)/2;
+    const rad = Math.max(Math.abs(p[0]-cu)*R.w, Math.abs(p[1]-cv)*R.h, MIN_SIDE*R.w/2);
+    let ru = rad / R.w, rv = rad / R.h;
+    const k = Math.min(1, cu/ru, (1-cu)/ru, cv/rv, (1-cv)/rv); ru *= k; rv *= k;
+    applyBox([cu-ru, cv-rv, cu+ru, cv+rv]);
+  } else {
+    // box / free: the opposite corner stays put
+    const c = E.corner, left = c === 0 || c === 3, top = c === 0 || c === 1;
+    const u = Math.max(0, Math.min(1, p[0])), v = Math.max(0, Math.min(1, p[1]));
+    const nx0 = left ? Math.min(u, a1 - MIN_SIDE) : a0, nx1 = left ? a1 : Math.max(u, a0 + MIN_SIDE);
+    const ny0 = top ? Math.min(v, b1 - MIN_SIDE) : b0, ny1 = top ? b1 : Math.max(v, b0 + MIN_SIDE);
+    applyBox([nx0, ny0, nx1, ny1]);
+  }
+}
+function endEdit(cancel, e){
+  const E = S.edit; S.edit = null; if (!E) return;
+  if (!E.moved){ if (!cancel && e) tapFocus(e); return; }   // a plain tap: just focus there
+  if (cancel){ S.box = E.box0; if (E.pts0) S.shape = { type: "poly", pts: E.pts0 }; return; }
+  const hadRef = !!S.ref;
+  S.ref = null; S.prev = null; S.prevC = null; S.presence = null; lastMask = null;
+  buildShapeMasks(); persist(); refreshButtons();
+  guide(hadRef ? "Area moved. Tap Background again (with the head away) if you use it." : "Area updated.", 3500);
+}
+const SHAPE_GUIDE = {
+  rect: "Box: drag from corner to corner over the parked head.",
+  ellipse: "Circle: touch the centre of the parked marker and drag outward.",
+  poly: "Free: draw around the parked head with your finger, then lift."
+};
+function bboxOf(pts){ const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]); return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)]; }
+$("stage").addEventListener("pointerdown", e => {
+  if (e.target.closest("#camPanel, #topbar")) return;
+  if (S.picking){ e.preventDefault(); pickMarker(e); return; }
+  if (!S.drawing){
+    if (S.running) return;
+    const hit = editHit(e);
+    if (hit){ e.preventDefault(); $("stage").setPointerCapture(e.pointerId); startEdit(e, hit); return; }
+    tapFocus(e); return;
+  }
+  e.preventDefault(); $("stage").setPointerCapture(e.pointerId);
+  const p = toNorm(e); S.drawStart = p; S.drawStartPx = [e.clientX, e.clientY];
+  if (cfg.shape === "poly"){ S.drawPts = [p]; S.box = [...p, ...p]; }
+  else { S.drawPts = null; S.shape = { type: cfg.shape }; S.box = [...p, ...p]; }
+});
+$("stage").addEventListener("pointermove", e => {
+  if (S.edit){ moveEdit(e); return; }
+  if (!S.drawing || !S.drawStart) return;
+  const p = toNorm(e), a = S.drawStart;
+  if (cfg.shape === "poly"){
+    const last = S.drawPts[S.drawPts.length - 1];
+    if (Math.hypot(p[0] - last[0], p[1] - last[1]) > 0.004){ S.drawPts.push(p); S.box = bboxOf(S.drawPts); }
+  } else if (cfg.shape === "ellipse"){
+    // a true circle on screen, centred where the finger went down
+    const R = picRect(), rad = Math.hypot(e.clientX - S.drawStartPx[0], e.clientY - S.drawStartPx[1]);
+    const ru = rad / R.w, rv = rad / R.h;
+    S.box = [Math.max(0, a[0] - ru), Math.max(0, a[1] - rv), Math.min(1, a[0] + ru), Math.min(1, a[1] + rv)];
+  } else S.box = [Math.min(a[0],p[0]), Math.min(a[1],p[1]), Math.max(a[0],p[0]), Math.max(a[1],p[1])];
+});
+$("stage").addEventListener("pointercancel", () => { if (S.edit) endEdit(true); });
+$("stage").addEventListener("pointerup", e => {
+  if (S.edit){ endEdit(false, e); return; }
+  if (!S.drawing || !S.drawStart) return;
+  S.drawStart = null;
+  if (cfg.shape === "poly"){
+    const pts = S.drawPts || []; S.drawPts = null;
+    if (pts.length < 3){ S.box = null; S.shape = null; return; }
+    // keep the outline light: drop points closer than ~1% of the picture
+    const kept = [pts[0]]; for (const q of pts){ const l = kept[kept.length - 1]; if (Math.hypot(q[0] - l[0], q[1] - l[1]) > 0.01) kept.push(q); }
+    S.shape = { type: "poly", pts: kept.map(q => [+q[0].toFixed(4), +q[1].toFixed(4)]) }; S.box = bboxOf(kept);
+  }
+  if (!S.box || S.box[2]-S.box[0] < 0.02 || S.box[3]-S.box[1] < 0.02){ S.box = null; S.shape = null; return; }
+  S.drawing = false; S.ref = null; S.prev = null; S.prevC = null; $("drawBtn").classList.remove("sel"); $("drawBtn").textContent = "Redraw area";
+  $("shapeRow").hidden = true; buildShapeMasks(); guide("");
+  persist(); refreshButtons();
+});
+function setShapeButtons(){ document.querySelectorAll("[data-shape]").forEach(b => b.setAttribute("aria-pressed", b.dataset.shape === cfg.shape)); }
+document.querySelectorAll("[data-shape]").forEach(b => b.onclick = () => { cfg.shape = b.dataset.shape; save("cfg", cfg); setShapeButtons(); guide(SHAPE_GUIDE[cfg.shape]); });
+$("drawBtn").onclick = () => {
+  if (S.picking) cancelPick();
+  S.drawing = !S.drawing; $("drawBtn").classList.toggle("sel", S.drawing);
+  $("drawBtn").textContent = S.drawing ? "Cancel" : (S.box ? "Redraw area" : "Draw area");
+  $("shapeRow").hidden = !S.drawing; setShapeButtons();
+  if (!S.drawing){ S.drawPts = null; S.drawStart = null; const p = profiles[profName] || {}; S.box = p.box || null; S.shape = p.shape || null; buildShapeMasks(); }
+  guide(S.drawing ? SHAPE_GUIDE[cfg.shape] : "");
+};
+$("markBtn").onclick = () => {
+  if (S.marker && !S.picking){ S.marker = null; lastMask = null; persist(); refreshButtons(); guide("Marker removed. Pick a marker or tap Background.", 4000); return; }
+  if (S.picking){ cancelPick(); return; }
+  S.picking = true; S.drawing = false; $("drawBtn").classList.remove("sel");
+  $("markBtn").classList.add("sel"); freeze(true);
+  guide("Picture paused. Tap the marker on the toolhead. Tap Marker again to cancel.");
+};
+function cancelPick(){ S.picking = false; $("markBtn").classList.remove("sel"); freeze(false); guide(""); }
+/* freeze the current camera picture so a moving head (purging, printing) can be tapped calmly */
+function freeze(on){
+  const f = $("freeze");
+  if (on && video.videoWidth){ f.width = video.videoWidth; f.height = video.videoHeight; f.getContext("2d").drawImage(video, 0, 0); }
+  f.hidden = !on; $("freezeTag").hidden = !on;
+}
+function pickMarker(e){
+  const vw = video.videoWidth, vh = video.videoHeight; if (!vw) return;
+  const [u, v] = toNorm(e), R = Math.max(3, Math.round(Math.min(vw, vh) * 0.006)), src = $("freeze").hidden ? video : $("freeze");
+  const c = document.createElement("canvas"); c.width = c.height = R*2+1;
+  c.getContext("2d").drawImage(src, u*vw - R, v*vh - R, R*2+1, R*2+1, 0, 0, R*2+1, R*2+1);
+  const d = c.getContext("2d").getImageData(0, 0, R*2+1, R*2+1).data;
+  let r = 0, g = 0, b = 0, n = d.length / 4; for (let i = 0; i < d.length; i += 4){ r += d[i]; g += d[i+1]; b += d[i+2]; }
+  r /= n; g /= n; b /= n; const [h, sat, val] = rgb2hsv(r, g, b);
+  if (sat < 0.3 || val < 0.2){
+    guide("That spot is too pale or dark to be the marker. Tap right on it, or tap Marker to cancel."); return; }
+  S.picking = false; $("markBtn").classList.remove("sel");
+  S.marker = { h: Math.round(h), s: +sat.toFixed(2), v: +val.toFixed(2), rgb: [r|0, g|0, b|0] };
+  // measure how big the marker looks: in the park box if the head is there, else in a box-sized window around the tap
+  grabCrop(null, src); let seen = markerPct(lastRGB);
+  if (!(seen >= 1) && S.box){
+    const bw = S.box[2] - S.box[0], bh = S.box[3] - S.box[1];
+    grabCrop([u - bw/2, v - bh/2, u + bw/2, v + bh/2], src); seen = markerPct(lastRGB, false);
+  }
+  if (seen && seen >= 1){ cfg.mkMin = Math.max(1, Math.round(seen * 0.45)); save("cfg", cfg); $("sMk").value = cfg.mkMin; $("vMk").textContent = cfg.mkMin + "%"; }
+  freeze(false); lastRGB = null; lastMask = null; S.prevC = null;
+  persist(); refreshButtons();
+  guide("Marker saved. When the head parks, the area turns green with white dots on the marker.", 7000);
+}
+$("refBtn").onclick = () => {
+  const g = grabCrop(); if (!g) return;
+  S.ref = Float32Array.from(g); persist(); refreshButtons();
+  guide("Background saved. Move the head into the area: it should turn green.", 6000);
+};
+
+/* ---------------- profiles ---------------- */
+function persist(){
+  profiles[profName] = { box: S.box, shape: S.shape, ref: S.ref ? Array.from(S.ref, v => Math.round(v)) : null, marker: S.marker };
+  save("profiles", profiles);
+}
+function selectProfile(name){
+  profName = name; save("prof", name);
+  $("pFront").setAttribute("aria-pressed", name === "front"); $("pTop").setAttribute("aria-pressed", name === "top");
+  const p = profiles[name] || {};
+  S.box = p.box || null; S.shape = p.shape || null; S.ref = p.ref ? Float32Array.from(p.ref) : null; S.marker = p.marker || null;
+  S.prev = null; S.prevC = null; S.presence = null; lastMask = null; buildShapeMasks();
+  $("drawBtn").textContent = S.box ? "Redraw area" : "Draw area";
+  refreshButtons(); if (!S.running) guide("");
+}
+$("pFront").onclick = () => !S.running && selectProfile("front");
+$("pTop").onclick = () => !S.running && selectProfile("top");
+function refreshButtons(){
+  $("refBtn").disabled = !S.box; $("markBtn").disabled = !S.box;
+  $("startBtn").disabled = !(S.box && (S.ref || S.marker));
+  const mb = $("markBtn");
+  if (S.marker){ mb.innerHTML = '<span class="swatch" style="background:rgb(' + S.marker.rgb.join(",") + ')"></span>Remove'; }
+  else mb.textContent = "Marker";
+}
+
+/* ---------------- run ---------------- */
+const IS_IOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+async function wakeOn(){
+  try{ S.wake = await navigator.wakeLock?.request("screen"); }catch(e){ S.wake = null; }
+  if (!S.wake) toast(IS_IOS ? "Keep the screen on: Settings → Display & Brightness → Auto-Lock → Never"
+                            : "This browser can't keep the screen on. Turn off screen timeout while printing.");
+}
+$("startBtn").onclick = async () => {
+  await DB.clearAll(); $("resumeRow").hidden = true;                              // only one timelapse is kept
+  S.session = "s" + Date.now(); save("session", S.session);
+  Object.assign(S, { running: true, shots: 0, lastShotT: -99, inVisit: false, absentSince: 0, cand: null });
+  $("shotCount").textContent = "0"; $("dimCount").textContent = "0"; $("lastThumb").removeAttribute("src");
+  $("setupControls").hidden = true; $("startBtn").hidden = true; $("runControls").hidden = false;
+  updateRunSub(); $("guide").hidden = true; await wakeOn(); S.lastActivity = Date.now();
+};
+$("stopBtn").onclick = () => stopRun();
+function stopRun(msg){
+  if (!S.running) return;
+  S.running = false; $("dim").hidden = true;
+  try{ S.wake?.release(); }catch(e){} S.wake = null;
+  $("setupControls").hidden = false; $("startBtn").hidden = false; $("runControls").hidden = true; $("guide").hidden = false; guide("");
+  if (msg) toast(msg);
+  openResults(S.session);
+}
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState !== "visible") return;
+  // iPhone/Android stop the camera when the app is hidden or the screen locks: bring it back
+  const t = video.srcObject?.getVideoTracks()[0];
+  if (!t || t.readyState === "ended") startCamera(); else video.play().catch(()=>{});
+  if (S.running){ wakeOn(); toast("Welcome back. Layers may have been missed while the app was hidden."); }
+});
+
+/* dim after a minute without touches while recording */
+["pointerdown","keydown"].forEach(ev => addEventListener(ev, () => { S.lastActivity = Date.now(); }, true));
+$("dim").onclick = () => { $("dim").hidden = true; S.lastActivity = Date.now(); };
+setInterval(() => { if (S.running && $("dim").hidden && Date.now() - S.lastActivity > 60000) $("dim").hidden = false; }, 2000);
+
+/* ---------------- results / export ---------------- */
+let R = { blobs: [], playing: null, url: null, file: null };
+const HOLD_S = 2;                                   // the finished print stays on screen this long at the end
+function vidFps(){ return Math.max(2, Math.min(60, R.blobs.length / Math.max(1, cfg.vidLen - HOLD_S) || 2)); }   // the chosen length includes the 2 s end hold
+function updateResSub(){
+  const n = R.blobs.length, fps = vidFps(), len = n / fps + HOLD_S;
+  $("rLen").value = cfg.vidLen; $("rLenV").textContent = len.toFixed(1) + " s · " + (+fps.toFixed(1)) + " fps";
+  $("resSub").textContent = n + " shots";
+}
+$("rLen").oninput = e => { cfg.vidLen = +e.target.value; save("cfg", cfg); $("sLen").value = cfg.vidLen; $("vLen").textContent = cfg.vidLen + " s"; updateResSub(); $("saveRow").hidden = true; };
+async function openResults(session){
+  R.blobs = await DB.list(session);
+  $("results").hidden = false; $("saveRow").hidden = true; $("newConfirm").hidden = true; $("exporting").hidden = true; $("exportBtn").disabled = !R.blobs.length;
+  updateResSub();
+  $("scrub").max = Math.max(0, R.blobs.length - 1); $("scrub").value = R.blobs.length - 1;
+  if (R.blobs.length) showFrame(R.blobs.length - 1); else { const c = $("player"); c.width = 10; c.height = 10; }
+}
+async function bitmapAt(i){ return createImageBitmap(R.blobs[i]); }
+async function showFrame(i){
+  const bm = await bitmapAt(i), c = $("player");
+  if (c.width !== bm.width || c.height !== bm.height){ c.width = bm.width; c.height = bm.height; }
+  c.getContext("2d").drawImage(bm, 0, 0); bm.close?.();
+}
+$("scrub").oninput = e => showFrame(+e.target.value);
+$("playBtn").onclick = () => {
+  if (R.playing){ clearInterval(R.playing); R.playing = null; $("playBtn").textContent = "Play"; return; }
+  let i = 0; $("playBtn").textContent = "Pause";
+  R.playing = setInterval(async () => { if (i >= R.blobs.length){ clearInterval(R.playing); R.playing = null; $("playBtn").textContent = "Play"; return; } $("scrub").value = i; await showFrame(i++); }, 1000 / vidFps());
+};
+/* ---- tiny MP4 writer: one H.264 track, all samples in one chunk, moov before mdat (plays while downloading) ---- */
+function muxMp4(chunks, avcC, w, h, fps){
+  const TS = 90000, delta = Math.round(TS / fps), n = chunks.length, durTS = n * delta, durMs = Math.round(durTS * 1000 / TS);
+  const u32 = v => [(v >>> 24) & 255, (v >>> 16) & 255, (v >>> 8) & 255, v & 255], u16 = v => [(v >> 8) & 255, v & 255];
+  const str = t => Array.from(t, ch => ch.charCodeAt(0)), zeros = k => new Array(k).fill(0);
+  const cat = parts => { const arrs = parts.map(x => x instanceof Uint8Array ? x : Uint8Array.from(x)); const out = new Uint8Array(arrs.reduce((a, x) => a + x.length, 0)); let o = 0; for (const x of arrs){ out.set(x, o); o += x.length; } return out; };
+  const box = (type, ...parts) => { const body = cat(parts); return cat([u32(8 + body.length), str(type), body]); };
+  const full = (type, ver, flags, ...parts) => box(type, [ver, (flags >> 16) & 255, (flags >> 8) & 255, flags & 255], ...parts);
+  const matrix = [0x00010000, 0, 0, 0, 0x00010000, 0, 0, 0, 0x40000000].flatMap(u32);
+  const keys = []; chunks.forEach((c, i) => c.key && keys.push(i + 1));
+  const build = offset => box("moov",
+    full("mvhd", 0, 0, u32(0), u32(0), u32(1000), u32(durMs), u32(0x00010000), u16(0x0100), u16(0), u32(0), u32(0), matrix, zeros(24), u32(2)),
+    box("trak",
+      full("tkhd", 0, 3, u32(0), u32(0), u32(1), u32(0), u32(durMs), u32(0), u32(0), u16(0), u16(0), u16(0), u16(0), matrix, u32(w * 65536), u32(h * 65536)),
+      box("mdia",
+        full("mdhd", 0, 0, u32(0), u32(0), u32(TS), u32(durTS), u16(0x55c4), u16(0)),
+        full("hdlr", 0, 0, u32(0), str("vide"), u32(0), u32(0), u32(0), str("VideoHandler"), [0]),
+        box("minf",
+          full("vmhd", 0, 1, u16(0), u16(0), u16(0), u16(0)),
+          box("dinf", full("dref", 0, 0, u32(1), full("url ", 0, 1))),
+          box("stbl",
+            full("stsd", 0, 0, u32(1), box("avc1", zeros(6), u16(1), zeros(16), u16(w), u16(h), u32(0x00480000), u32(0x00480000), u32(0), u16(1), zeros(32), u16(0x0018), u16(0xffff), box("avcC", avcC))),
+            full("stts", 0, 0, u32(1), u32(n), u32(delta)),
+            full("stss", 0, 0, u32(keys.length), keys.flatMap(u32)),
+            full("stsc", 0, 0, u32(1), u32(1), u32(n), u32(1)),
+            full("stsz", 0, 0, u32(0), u32(n), chunks.flatMap(c => u32(c.data.length))),
+            full("stco", 0, 0, u32(1), u32(offset)))))));
+  const ftyp = box("ftyp", str("isom"), u32(512), str("isom"), str("iso2"), str("avc1"), str("mp41"));
+  const moovSize = build(0).length, dataSize = chunks.reduce((a, c) => a + c.data.length, 0);
+  const moov = build(ftyp.length + moovSize + 8);
+  return new Blob([ftyp, moov, cat([u32(8 + dataSize), str("mdat")]), ...chunks.map(c => c.data)], { type: "video/mp4" });
+}
+function setExp(frac, text){ $("expBar").style.width = Math.round(frac * 100) + "%"; if (text) $("expText").textContent = text; }
+function etaText(done, total, t0){
+  const el = (performance.now() - t0) / 1000, left = done ? el / done * (total - done) : 0;
+  return "Making the video… " + done + " / " + total + (done > 5 ? " · about " + Math.max(1, Math.round(left)) + " s left" : "") + ". Keep the app open.";
+}
+async function findEncoder(w, h, fps){
+  if (!("VideoEncoder" in window)) return null;
+  const bitrate = Math.round(Math.min(20e6, Math.max(4e6, w * h * fps * 0.12)));
+  for (const codec of ["avc1.42E028", "avc1.42E032", "avc1.4D0028", "avc1.640028"]){       // baseline first: no B-frames
+    const c = { codec, width: w, height: h, bitrate, framerate: fps, avc: { format: "avc" } };
+    try{ if ((await VideoEncoder.isConfigSupported(c)).supported) return c; }catch(e){}
+  }
+  return null;
+}
+/* fast path: encode every frame with WebCodecs (faster than real time, exact length) */
+async function exportWebCodecs(){
+  const n = R.blobs.length, FPS = vidFps();
+  const first = await createImageBitmap(R.blobs[0]);
+  let w0 = first.width, h0 = first.height; first.close();
+  let ec = null, w = 0, h = 0;
+  for (const maxSide of [1920, 1280]){
+    const sc = Math.min(1, maxSide / Math.max(w0, h0)); w = Math.round(w0 * sc / 2) * 2; h = Math.round(h0 * sc / 2) * 2;
+    if ((ec = await findEncoder(w, h, FPS))) break;
+  }
+  if (!ec) return null;
+  const chunks = []; let desc = null, err = null, lastTs = -1, ordered = true;
+  const enc = new VideoEncoder({
+    output: (chunk, meta) => {
+      const data = new Uint8Array(chunk.byteLength); chunk.copyTo(data); chunks.push({ data, key: chunk.type === "key" });
+      if (chunk.timestamp < lastTs) ordered = false; lastTs = chunk.timestamp;
+      const d = meta?.decoderConfig?.description;
+      if (d && !desc) desc = d instanceof ArrayBuffer ? new Uint8Array(d.slice(0)) : new Uint8Array(d.buffer.slice(d.byteOffset, d.byteOffset + d.byteLength));
+    },
+    error: e => { err = e; }
+  });
+  enc.configure(ec);
+  const cv = document.createElement("canvas"); cv.width = w; cv.height = h; const ctx = cv.getContext("2d");
+  const holdN = Math.round(FPS * HOLD_S), total = n + holdN, dur = 1e6 / FPS, gop = Math.max(1, Math.round(FPS * 2)), t0 = performance.now();
+  let next = createImageBitmap(R.blobs[0]);
+  for (let i = 0; i < total; i++){
+    if (err) throw err;
+    if (i < n){ const bm = await next; next = i + 1 < n ? createImageBitmap(R.blobs[i + 1]) : null; ctx.drawImage(bm, 0, 0, w, h); bm.close(); }
+    const vf = new VideoFrame(cv, { timestamp: Math.round(i * dur), duration: Math.round(dur) });
+    enc.encode(vf, { keyFrame: i % gop === 0 }); vf.close();
+    while (enc.encodeQueueSize > 4) await new Promise(r => setTimeout(r, 4));
+    if (i % 4 === 0 || i === total - 1) setExp((i + 1) / total, etaText(Math.min(i + 1, n), n, t0));
+  }
+  await enc.flush(); enc.close();
+  if (err) throw err;
+  if (!desc || !ordered || chunks.length !== total) return null;                 // unexpected encoder output: use the fallback
+  return { blob: muxMp4(chunks, desc, w, h, FPS), ext: "mp4" };
+}
+/* fallback: record the canvas in real time (older browsers) */
+function pickMime(){
+  for (const m of ["video/mp4;codecs=avc1.42E028","video/mp4","video/webm;codecs=vp9","video/webm;codecs=vp8","video/webm"])
+    if (window.MediaRecorder && MediaRecorder.isTypeSupported(m)) return m;
+  return "";
+}
+async function exportRecorder(){
+  const mime = pickMime(); if (!mime) throw new Error("this browser can't make videos");
+  const first = await bitmapAt(0);
+  let w = first.width, h = first.height; const s = Math.min(1, 1920 / Math.max(w, h)); w = Math.round(w*s/2)*2; h = Math.round(h*s/2)*2; first.close?.();
+  const c = document.createElement("canvas"); c.width = w; c.height = h; const ctx = c.getContext("2d");
+  const FPS = vidFps(), stream = c.captureStream(FPS);
+  const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 12_000_000 });
+  const chunks = []; rec.ondataavailable = e => e.data.size && chunks.push(e.data);
+  const done = new Promise(r => rec.onstop = r);
+  const dt = 1000 / FPS, sleep = ms => new Promise(r => setTimeout(r, ms));
+  const list = [...R.blobs.keys()]; const holdN = Math.round(FPS * HOLD_S);
+  for (let k = 0; k < holdN; k++) list.push(R.blobs.length - 1);
+  let cur = await bitmapAt(list[0]), curIdx = list[0];
+  ctx.drawImage(cur, 0, 0, w, h);
+  let nk0 = list.findIndex(v => v !== curIdx), nextBm = nk0 >= 0 ? bitmapAt(list[nk0]) : Promise.resolve(null);
+  rec.start(100); const t0 = performance.now();
+  for (let k = 0; k < list.length; k++){
+    if (list[k] !== curIdx){
+      cur?.close?.(); cur = await nextBm; curIdx = list[k];
+      const nk = list.findIndex((v, j) => j > k && v !== curIdx); nextBm = nk >= 0 ? bitmapAt(list[nk]) : Promise.resolve(null);
+    }
+    ctx.drawImage(cur, 0, 0, w, h);
+    setExp((k+1) / list.length, etaText(Math.min(k + 1, R.blobs.length), R.blobs.length, t0));
+    const wait = t0 + (k+1)*dt - performance.now(); if (wait > 0) await sleep(wait);
+  }
+  cur?.close?.(); await sleep(dt * 2);
+  rec.stop(); await done;
+  return { blob: new Blob(chunks, { type: mime.split(";")[0] }), ext: mime.startsWith("video/mp4") ? "mp4" : "webm" };
+}
+$("exportBtn").onclick = async () => {
+  if (R.busy || !R.blobs.length) return; R.busy = true;
+  $("exportBtn").disabled = true; $("exporting").hidden = false; $("saveRow").hidden = true; setExp(0, "Getting ready…");
+  let out = null;
+  try{ out = await exportWebCodecs(); }catch(e){ console.warn("fast export failed", e); out = null; }
+  if (!out){ try{ out = await exportRecorder(); }catch(e){ toast("Couldn't make the video: " + e.message); } }
+  R.busy = false; $("exporting").hidden = true; $("exportBtn").disabled = false;
+  if (!out) return;
+  const name = "radicals-layerlapse-" + new Date().toISOString().slice(0,16).replace(/[-:T]/g, "") + "." + out.ext;
+  if (R.url) URL.revokeObjectURL(R.url);
+  R.url = URL.createObjectURL(out.blob); R.file = new File([out.blob], name, { type: out.blob.type });
+  $("dlLink").href = R.url; $("dlLink").download = name;
+  $("shareBtn").hidden = !(navigator.canShare && navigator.canShare({ files: [R.file] }));
+  if (IS_IOS) $("shareBtn").textContent = "Save to Photos / Share";     // iPhone: the share sheet has "Save Video"
+  $("saveRow").hidden = false;
+  toast("Video ready (" + (out.blob.size/1e6).toFixed(1) + " MB)");
+};
+$("shareBtn").onclick = async () => { try{ await navigator.share({ files: [R.file], title: "Radicals LayerLapse" }); }catch(e){} };
+$("newBtn").onclick = () => { $("newConfirm").hidden = false; };
+$("newNo").onclick = () => { $("newConfirm").hidden = true; };
+$("newYes").onclick = () => {
+  if (R.playing){ clearInterval(R.playing); R.playing = null; $("playBtn").textContent = "Play"; }
+  save("session", null); S.session = null; R.blobs = [];
+  $("newConfirm").hidden = true; $("results").hidden = true; $("resumeRow").hidden = true; guide("");
+  DB.clearAll().then(() => toast("Old timelapse deleted"), () => {});            // runs in the background; the screen is free right away
+};
+
+/* ---------------- settings sheet ---------------- */
+const fields = [["sThr","thr","vThr", v=>v],["sMk","mkMin","vMk", v=>v+"%"],["sHue","hueTol","vHue", v=>"±"+v+"°"],["sSettle","settle","vSettle", v=>(+v).toFixed(1)+" s"],
+  ["sGap","gap","vGap", v=>(+v).toFixed(1)+" s"],["sMax","maxPark","vMax", v=>(+v).toFixed(1)+" s"],["sAuto","auto","vAuto", v=>+v ? v+" min" : "off"],["sLen","vidLen","vLen", v=>v+" s"]];
+fields.forEach(([id, key, out, fmt]) => {
+  const el = $(id); el.value = cfg[key]; $(out).textContent = fmt(cfg[key]);
+  el.oninput = () => { cfg[key] = +el.value; $(out).textContent = fmt(el.value); save("cfg", cfg); };
+});
+$("sCam").onchange = e => { cfg.cam = e.target.value; cfg.camCtl = {}; save("cfg", cfg); S.prev = null; S.prevC = null; startCamera(); };
+$("openSettings").onclick = () => { $("settings").hidden = false; };
+$("closeSettings").onclick = () => { $("settings").hidden = true; };
+$("settings").onclick = e => { if (e.target.id === "settings") $("settings").hidden = true; };
+
+/* ---------------- misc ---------------- */
+function nextStep(){
+  if (!S.box) return "Step 1 · Tap Draw area, pick Box, Circle or Free, and mark the spot where the toolhead parks.";
+  if (!S.marker && !S.ref) return "Step 2 · Tap Marker, then tap the marker on the toolhead (it can be anywhere).";
+  return "Ready · Tap Start timelapse, then start the print. (Drag the area to move it, or its corner dots to resize.)";
+}
+function guide(t, ms){
+  const el = $("guide"); el.textContent = t || nextStep();
+  clearTimeout(guide.t); if (t && ms) guide.t = setTimeout(() => { el.textContent = nextStep(); }, ms);
+}
+function toast(t){ const el = $("toast"); el.textContent = t; el.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(() => el.hidden = true, 3500); }
+
+/* boot */
+selectProfile(profName); guide("");
+startCamera();
+setInterval(analyse, 100);
+const pending = load("session", null);
+if (pending){ DB.list(pending).then(b => {
+  if (!b.length){ save("session", null); return; }
+  S.session = pending; $("resumeRow").hidden = false; guide("Your last timelapse (" + b.length + " shots) is still saved.");
+}); }
+$("resumeOpen").onclick = () => { $("resumeRow").hidden = true; guide(""); openResults(S.session); };
+$("resumeDiscard").onclick = () => { $("resumeRow").hidden = true; save("session", null); S.session = null; guide(""); DB.clearAll().then(() => toast("Old timelapse deleted"), () => {}); };
+if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(()=>{});
+</script>
+</body>
+</html>
